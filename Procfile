@@ -1,0 +1,1 @@
+worker: python ota_bot.py
