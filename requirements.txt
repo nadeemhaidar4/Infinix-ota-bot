@@ -1,2 +1,3 @@
-telethon
-pytelegrambotapi
+requests
+flask
+gunicorn
