@@ -7,5 +7,104 @@
     "country": "IN",
     "lang": "en",
     "android_id": "603c17d732628de0"
+  },
+  {
+    "name": "Infinix GT 10 Pro",
+    "brand": "Infinix",
+    "model": "X6739",
+    "osVersion": "X6739_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "a1b2c3d4e5f60718"
+  },
+  {
+    "name": "Infinix Note 30 5G",
+    "brand": "Infinix",
+    "model": "X6711",
+    "osVersion": "X6711_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "b2c3d4e5f6a7b8c9"
+  },
+  {
+    "name": "Infinix Zero 30 5G",
+    "brand": "Infinix",
+    "model": "X6731",
+    "osVersion": "X6731_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "c3d4e5f6a7b8c9d0"
+  },
+  {
+    "name": "Infinix Hot 40 Pro",
+    "brand": "Infinix",
+    "model": "X6836",
+    "osVersion": "X6836_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "d4e5f6a7b8c9d0e1"
+  },
+  {
+    "name": "Tecno Camon 20 Pro 5G",
+    "brand": "Tecno",
+    "model": "CK8n",
+    "osVersion": "CK8n_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "e5f6a7b8c9d0e1f2"
+  },
+  {
+    "name": "Tecno Phantom V Fold",
+    "brand": "Tecno",
+    "model": "AD10",
+    "osVersion": "AD10_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "f6a7b8c9d0e1f2a3"
+  },
+  {
+    "name": "Tecno Pova 5 Pro",
+    "brand": "Tecno",
+    "model": "LH8n",
+    "osVersion": "LH8n_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "0718a1b2c3d4e5f6"
+  },
+  {
+    "name": "Tecno Spark 20 Pro",
+    "brand": "Tecno",
+    "model": "KJ6",
+    "osVersion": "KJ6_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "18a1b2c3d4e5f607"
+  },
+  {
+    "name": "Tecno Camon 30 Premier",
+    "brand": "Tecno",
+    "model": "CL9",
+    "osVersion": "CL9_V14.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "2c3d4e5f6a7b8c9d"
+  },
+  {
+    "name": "Infinix Note 40 Pro",
+    "brand": "Infinix",
+    "model": "X6850",
+    "osVersion": "X6850_V14.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "3d4e5f6a7b8c9d0e"
+  },
+  {
+    "name": "Tecno Spark 10 Pro",
+    "brand": "Tecno",
+    "model": "KI7",
+    "osVersion": "KI7_V13.0.0.0",
+    "country": "IN",
+    "lang": "en",
+    "android_id": "4e5f6a7b8c9d0e1f"
   }
 ]
