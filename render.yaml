@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: ota-telegram-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: CHAT_ID
+        sync: false
+      - key: CHECK_INTERVAL
+        value: 300
+      - key: PYTHONUNBUFFERED
+        value: "1"
