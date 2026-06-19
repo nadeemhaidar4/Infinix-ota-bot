@@ -1,0 +1,6 @@
+{
+  "bot_token": "PUT_YOUR_BOT_TOKEN_HERE",
+  "chat_id": "@your_channel_username_or_-1001234567890",
+  "check_interval_seconds": 300,
+  "send_raw_json": false
+}
