@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import json
 import time
 import os
 import threading
+import re
 from pathlib import Path
 import requests
 from flask import Flask, jsonify
@@ -23,8 +25,8 @@ def load_json(path, default):
 
 def load_config():
     cfg = load_json(CONFIG_PATH, {})
-    cfg["bot_token"]              = os.environ.get("BOT_TOKEN",       cfg.get("bot_token", ""))
-    cfg["chat_id"]                = os.environ.get("CHAT_ID",         cfg.get("chat_id", ""))
+    cfg["bot_token"]              = os.environ.get("BOT_TOKEN", cfg.get("bot_token", ""))
+    cfg["chat_id"]                = os.environ.get("CHAT_ID", cfg.get("chat_id", ""))
     cfg["check_interval_seconds"] = int(os.environ.get("CHECK_INTERVAL", cfg.get("check_interval_seconds", 300)))
     cfg["send_raw_json"]          = os.environ.get("SEND_RAW_JSON", str(cfg.get("send_raw_json", False))).lower() == "true"
     return cfg
@@ -38,7 +40,7 @@ def load_state():
     return load_json(STATE_PATH, {})
 
 def save_state(state):
-    with open(STATE_PATH, "w") as f:
+    with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
 # ─────────────────────────────────────────
@@ -46,7 +48,11 @@ def save_state(state):
 # ─────────────────────────────────────────
 def parse_version(v):
     try:
-        return tuple(int(x) for x in str(v).strip().split("."))
+        # Extract actual version numbers like 15.1.2.145 from "X6861_V15.1.2.145"
+        match = re.search(r'(\d+\.\d+\.\d+\.\d+)', str(v))
+        if match:
+            return tuple(int(x) for x in match.group(1).split("."))
+        return tuple(int(x) for x in str(v).replace("V", "").strip().split("."))
     except:
         return (0,)
 
@@ -54,12 +60,13 @@ def is_newer(new_v, old_v):
     return parse_version(new_v) > parse_version(old_v)
 
 # ─────────────────────────────────────────
-# OTA CHECK - FIXED HOSTS ONLY
+# OTA CHECK - ORIGINAL HOSTS (Real OTA API)
 # ─────────────────────────────────────────
 HOSTS = [
-    "https://osupdate-api.palmplaystore.com"
+    "https://osupdate.transsion-os.com",
+    "https://test-osupdate.transsion-os.com"
 ]
-ENDPOINT = "/api/setting-config/os-update-detail"
+ENDPOINT = "/OSUpdate/api/getPushInfo"
 
 def check_ota(device: dict):
     payload = {
@@ -71,6 +78,7 @@ def check_ota(device: dict):
         "model":     device["model"],
         "osVersion": device["osVersion"],
     }
+    
     headers = {
         "Content-Type": "application/json; charset=utf-8",
         "Accept":       "application/json",
@@ -83,13 +91,12 @@ def check_ota(device: dict):
             print(f"    → POST {url}")
             r = requests.post(url, json=payload, headers=headers, timeout=20)
             print(f"    ← HTTP {r.status_code}")
-            print(f"    ← Body: {r.text[:400]}")
-
+            
             if r.status_code == 200:
                 return {"ok": True, "host": base, "data": r.json(), "payload": payload}
             else:
                 print(f"    Non-200 from {base}, trying next...")
-
+                
         except requests.exceptions.ConnectionError as e:
             print(f"    Connection error {base}: {e}")
         except requests.exceptions.Timeout:
@@ -106,7 +113,6 @@ def parse_ota(api_json: dict):
     if not api_json:
         return None
 
-    # Code check
     code = api_json.get("code", 200)
     msg  = api_json.get("msg", "")
     print(f"    API code={code} msg={msg}")
@@ -126,8 +132,6 @@ def parse_ota(api_json: dict):
         data = data["data"]
     if not isinstance(data, dict):
         return None
-
-    print(f"    Data keys: {list(data.keys())}")
 
     version = (
         data.get("osSmallVersion") or
@@ -183,7 +187,7 @@ def format_msg(device, ota):
         pass
 
     dl_line = f'🔗 <a href="{ota["url"]}">Download Package</a>\n' if ota["url"] else ""
-    md5_line = f'🔐 MD5: <code>{ota["md5"]}</code>\n'             if ota["md5"] else ""
+    md5_line = f'🔐 MD5: <code>{ota["md5"]}</code>\n'              if ota["md5"] else ""
     changelog = str(ota["changelog"])[:1000] if ota["changelog"] else "Not available"
 
     return (
