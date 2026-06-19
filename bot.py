@@ -57,10 +57,9 @@ def is_newer(new_v, old_v):
 # OTA CHECK - FIXED HOSTS ONLY
 # ─────────────────────────────────────────
 HOSTS = [
-    "https://osupdate.transsion-os.com",
-    "https://test-osupdate.transsion-os.com",
+    "https://osupdate-api.palmplaystore.com"
 ]
-ENDPOINT = "/OSUpdate/api/getPushInfo"
+ENDPOINT = "/api/setting-config/os-update-detail"
 
 def check_ota(device: dict):
     payload = {
