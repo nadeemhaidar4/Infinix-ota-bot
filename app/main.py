@@ -287,7 +287,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str, 
     
     await manager.broadcast(room_id, {
         "type": "chat", "sender": "System", 
-        "text": f"{username} joined. ({len(room['connections'])}/{room['capacity']})"
+        "text": f"{username} joined the squad. ({len(room['connections'])}/{room['capacity']})"
     })
 
     if len(room['connections']) == room['capacity'] and room['state'] == 'waiting':
@@ -345,7 +345,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str, 
         if len(room['connections']) == 0:
             del manager.rooms[room_id]
         else:
-            await manager.broadcast(room_id, {"type": "chat", "sender": "System", "text": f"{username} left."})
+            await manager.broadcast(room_id, {"type": "chat", "sender": "System", "text": f"{username} disconnected."})
 
 async def start_turn(room_id):
     room = manager.rooms[room_id]
@@ -353,7 +353,7 @@ async def start_turn(room_id):
     await manager.broadcast(room_id, {
         "type": "turn_update", 
         "current_player": current_player,
-        "message": f"{current_player}'s turn to speak!"
+        "message": f"🎙️ {current_player} is speaking..."
     })
 
 async def calculate_votes(room_id):
@@ -377,7 +377,7 @@ async def calculate_votes(room_id):
             room['state'] = 'game_over'
             await manager.broadcast(room_id, {
                 "type": "game_over", "winner": "spy",
-                "message": f"💀 {eliminated_player} was a Civilian. Only 2 left. SPY WINS!"
+                "message": f"💀 {eliminated_player} was a Civilian. SPY WINS!"
             })
         else:
             await manager.broadcast(room_id, {
