@@ -191,21 +191,6 @@ function releaseDownload(ip) {
   }
 }
 
-function withTimeout(promise, ms, message) {
-  let timer;
-
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(message));
-    }, ms);
-  });
-
-  return Promise.race([
-    promise.finally(() => clearTimeout(timer)),
-    timeout
-  ]);
-}
-
 function filenameFromUrl(url, contentType = "") {
   let name = "";
 
@@ -240,64 +225,6 @@ function getContentType(response) {
     .split(";")[0]
     .trim()
     .toLowerCase();
-}
-
-function detectSocialPlatform(rawUrl) {
-  let hostname;
-
-  try {
-    hostname = new URL(rawUrl).hostname
-      .toLowerCase()
-      .replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-
-  if (
-    hostname === "instagram.com" ||
-    hostname.endsWith(".instagram.com")
-  ) {
-    return "Instagram";
-  }
-
-  if (
-    hostname === "facebook.com" ||
-    hostname.endsWith(".facebook.com") ||
-    hostname === "fb.watch"
-  ) {
-    return "Facebook";
-  }
-
-  if (
-    hostname === "youtube.com" ||
-    hostname === "youtu.be" ||
-    hostname.endsWith(".youtube.com")
-  ) {
-    return "YouTube";
-  }
-
-  if (
-    hostname === "tiktok.com" ||
-    hostname.endsWith(".tiktok.com")
-  ) {
-    return "TikTok";
-  }
-
-  return null;
-}
-
-function looksLikeDirectMediaUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-
-    const pathname = url.pathname.toLowerCase();
-
-    return /\.(mp4|webm|mov|mkv|mp3|m4a|wav|jpg|jpeg|png|webp|gif)$/i.test(
-      pathname
-    );
-  } catch {
-    return false;
-  }
 }
 
 async function fetchSafe(
@@ -345,29 +272,6 @@ async function fetchSafe(
 
 async function inspectMedia(rawUrl) {
   const url = await validateUrl(rawUrl);
-
-  const platform = detectSocialPlatform(url.toString());
-
-  /*
-   * Social-media page URLs are intentionally detected separately.
-   * We do not attempt to bypass login, private content, DRM,
-   * signed URLs or platform protections.
-   */
-  if (
-    platform &&
-    !looksLikeDirectMediaUrl(url.toString())
-  ) {
-    return {
-      ok: false,
-      type: "social-page",
-      platform,
-      message:
-        `${platform} page URL detected. ` +
-        `This QuickSave version accepts direct/public media URLs. ` +
-        `For protected platform content, use the platform's official export/download or an authorized API.`
-    };
-  }
-
   const controller = new AbortController();
 
   const timer = setTimeout(() => {
@@ -439,7 +343,7 @@ async function inspectMedia(rawUrl) {
         type: "unsupported",
         contentType,
         message:
-          "This URL does not point to a supported public media file."
+          "This URL does not point to a supported public media file. Ensure it's a direct link to a video/audio."
       };
     }
 
@@ -538,27 +442,7 @@ app.get("/api/download", async (req, res) => {
 
   try {
     const rawUrl = req.query.url;
-
     const url = await validateUrl(rawUrl);
-
-    const platform = detectSocialPlatform(
-      url.toString()
-    );
-
-    if (
-      platform &&
-      !looksLikeDirectMediaUrl(url.toString())
-    ) {
-      return res.status(400).json({
-        ok: false,
-        type: "social-page",
-        platform,
-        message:
-          `${platform} page URLs cannot be converted here. ` +
-          `Use a direct/public media URL or an authorized official API flow.`
-      });
-    }
-
     const controller = new AbortController();
 
     const timer = setTimeout(() => {
@@ -582,8 +466,7 @@ app.get("/api/download", async (req, res) => {
         });
       }
 
-      const contentType =
-        getContentType(response);
+      const contentType = getContentType(response);
 
       if (!ALLOWED_MIME.has(contentType)) {
         return res.status(400).json({
@@ -703,10 +586,6 @@ app.use(
   })
 );
 
-/*
- * Express 5 safe fallback.
- * Do NOT use app.get("*", ...) here.
- */
 app.use((req, res) => {
   res.sendFile(
     path.join(PUBLIC_DIR, "index.html")
