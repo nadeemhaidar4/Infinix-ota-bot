@@ -1,118 +1,658 @@
-const express=require("express");
-const path=require("path");
-const {URL}=require("url");
-const app=express();
-const PORT=Number(process.env.PORT||10000);
+const express = require("express");
+const dns = require("dns").promises;
+const net = require("net");
+const path = require("path");
+const { Readable } = require("stream");
 
-const MAX=250*1024*1024, TIMEOUT=15000, DL_TIMEOUT=60000, REDIRECTS=4;
-const MAX_ACTIVE=3, WINDOW=60000, RATE=20;
-const active=new Map(), buckets=new Map();
+const app = express();
 
-const TYPES=new Set([
- "video/mp4","video/webm","video/quicktime","video/x-matroska",
- "audio/mpeg","audio/mp4","audio/wav","audio/webm",
- "image/jpeg","image/png","image/webp","image/gif"
+const PORT = Number(process.env.PORT || 10000);
+
+const MAX_BYTES = 250 * 1024 * 1024;
+const INSPECT_TIMEOUT_MS = 15000;
+const DOWNLOAD_TIMEOUT_MS = 60000;
+const MAX_REDIRECTS = 4;
+const MAX_ACTIVE_PER_IP = 3;
+const RATE_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT = 20;
+
+const allowedTypes = new Set([
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "video/x-matroska",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/webm",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif"
 ]);
 
-app.disable("x-powered-by");
-app.use(express.json({limit:"16kb"}));
-app.use(express.static(path.join(__dirname,"public"),{extensions:["html"]}));
+const rateStore = new Map();
+const activeDownloads = new Map();
 
-function key(req){return (req.headers["x-forwarded-for"]||req.socket.remoteAddress||"unknown").toString().split(",")[0].trim()}
-function limited(req,res,next){
- const k=key(req),now=Date.now(); let b=buckets.get(k);
- if(!b||now-b.start>=WINDOW){b={start:now,count:0};buckets.set(k,b)}
- if(++b.count>RATE)return res.status(429).json({ok:false,message:"Too many requests. Please wait a minute."});
- next();
-}
-setInterval(()=>{const n=Date.now();for(const[k,v]of buckets)if(n-v.start>=WINDOW)buckets.delete(k)},300000).unref();
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
 
-function privateHost(h){
- h=h.toLowerCase().replace(/\.$/,"");
- if(["localhost","ip6-localhost","::1"].includes(h))return true;
- const m=h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);if(!m)return false;
- const a=+m[1],b=+m[2];
- return a===10||a===127||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||a===0;
-}
-function valid(raw){
- if(typeof raw!=="string"||raw.length>4096)throw Error("Please enter a valid URL.");
- let u;try{u=new URL(raw.trim())}catch{throw Error("Please enter a valid URL.")}
- if(!["http:","https:"].includes(u.protocol))throw Error("Only HTTP and HTTPS links are supported.");
- if(privateHost(u.hostname))throw Error("This address is not allowed.");
- return u;
-}
-function ctl(ms){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);t.unref?.();return[c,()=>clearTimeout(t)]}
-async function fetchSafe(raw,method,ms=TIMEOUT){
- let cur=valid(raw);
- for(let i=0;i<=REDIRECTS;i++){
-  const[c,clear]=ctl(ms);
-  try{
-   const r=await fetch(cur,{method,redirect:"manual",signal:c.signal,headers:{User-Agent:"QuickSave/2.0",Accept:"*/*"}});
-   if([301,302,303,307,308].includes(r.status)){
-    const loc=r.headers.get("location");if(!loc)throw Error("Invalid redirect.");
-    cur=valid(new URL(loc,cur).toString());continue;
-   }
-   return{response:r,url:cur};
-  }finally{clear()}
- }
- throw Error("Too many redirects.");
-}
-function fname(s,f="quicksave-media"){
- const x=String(s||f).replace(/[<>:"/\\|?*\x00-\x1F]/g,"").replace(/\s+/g," ").trim().slice(0,120);
- return x||f;
-}
-function ext(t){return({"video/mp4":".mp4","video/webm":".webm","video/quicktime":".mov","video/x-matroska":".mkv","audio/mpeg":".mp3","audio/mp4":".m4a","audio/wav":".wav","audio/webm":".webm","image/jpeg":".jpg","image/png":".png","image/webp":".webp","image/gif":".gif"})[t]||""}
-function acquire(k){const n=active.get(k)||0;if(n>=MAX_ACTIVE)return false;active.set(k,n+1);return true}
-function release(k){const n=active.get(k)||0;if(n<=1)active.delete(k);else active.set(k,n-1)}
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
 
-app.get("/health",(req,res)=>res.json({ok:true,service:"quicksave",uptime:Math.round(process.uptime()),active:[...active.values()].reduce((a,b)=>a+b,0)}));
+  return req.socket.remoteAddress || "unknown";
+}
 
-app.post("/api/inspect",limited,async(req,res)=>{
- try{
-  const input=String(req.body?.url||"").trim(),u=valid(input);
-  let q=await fetchSafe(u.toString(),"HEAD"),r=q.response;
-  if(!r.ok&&[400,403,405,406,501].includes(r.status)){q=await fetchSafe(u.toString(),"GET");r=q.response}
-  if(!r.ok)return res.status(400).json({ok:false,message:`The server returned HTTP ${r.status}.`});
-  const type=(r.headers.get("content-type")||"").split(";")[0].toLowerCase(),size=Number(r.headers.get("content-length")||0);
-  if(!TYPES.has(type))return res.status(415).json({ok:false,message:"This is not a supported direct media file. Use a direct/public media URL."});
-  if(size>MAX)return res.status(413).json({ok:false,message:"This file is larger than the 250 MB limit."});
-  let n=fname(decodeURIComponent(q.url.pathname.split("/").pop()||"quicksave-media"));if(!n.includes("."))n+=ext(type);
-  res.json({ok:true,mediaUrl:q.url.toString(),type,size:size||null,filename:n});
- }catch(e){res.status(400).json({ok:false,message:e.name==="AbortError"?"The media server took too long to respond.":e.message||"Unable to inspect this URL."})}
-});
+function isPrivateIPv4(ip) {
+  const parts = ip.split(".").map(Number);
 
-app.get("/api/download",limited,async(req,res)=>{
- const k=key(req);if(!acquire(k))return res.status(429).send("Too many simultaneous downloads. Please wait.");
- let done=false,cleanup=()=>{if(!done){done=true;release(k)}};req.on("close",cleanup);
- try{
-  const q=await fetchSafe(String(req.query.url||""),"GET",DL_TIMEOUT),r=q.response;
-  if(!r.ok)throw Error(`Unable to download: HTTP ${r.status}`);
-  const type=(r.headers.get("content-type")||"").split(";")[0].toLowerCase();
-  if(!TYPES.has(type))throw Error("Unsupported media type.");
-  const declared=Number(r.headers.get("content-length")||0);if(declared>MAX)throw Error("File exceeds the 250 MB limit.");
-  let n=fname(decodeURIComponent(q.url.pathname.split("/").pop()||"quicksave-media"));if(!n.includes("."))n+=ext(type);
-  res.status(200).set({"Content-Type":type,"Content-Disposition":`attachment; filename="${n}"`,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"});
-  const reader=r.body.getReader();let total=0;
-  try{
-   while(true){
-    const{x,done:finished}=await reader.read().then(v=>({x:v.value,done:v.done}));
-    if(finished)break;
-    total+=x.byteLength;if(total>MAX){try{await reader.cancel()}catch{};if(!res.headersSent)res.status(413).send("File exceeds the 250 MB limit.");else res.destroy();return}
-    if(!res.write(Buffer.from(x)))await new Promise((resolve,reject)=>{
-      const d=()=>{c();resolve()},z=()=>{c();reject(Error("Client disconnected."))},c=()=>{res.off("drain",d);res.off("close",z)};
-      res.once("drain",d);res.once("close",z);
+  if (
+    parts.length !== 4 ||
+    parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+  ) {
+    return false;
+  }
+
+  const [a, b] = parts;
+
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function isBlockedHostname(hostname) {
+  const host = hostname.toLowerCase();
+
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    host === "[::1]"
+  );
+}
+
+async function isSafeHostname(hostname) {
+  if (isBlockedHostname(hostname)) {
+    return false;
+  }
+
+  const ipType = net.isIP(hostname);
+
+  if (ipType === 4) {
+    return !isPrivateIPv4(hostname);
+  }
+
+  if (ipType === 6) {
+    const normalized = hostname.toLowerCase();
+
+    if (
+      normalized === "::1" ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      normalized.startsWith("fe80:")
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  try {
+    const addresses = await dns.lookup(hostname, {
+      all: true,
+      verbatim: true
     });
-   }
-   res.end();
-  }finally{try{await reader.cancel()}catch{}}
- }catch(e){if(!res.headersSent)res.status(400).send(e.name==="AbortError"?"Download timed out.":e.message||"Download failed.");else if(!res.writableEnded)res.destroy()}
- finally{cleanup()}
+
+    if (!addresses.length) {
+      return false;
+    }
+
+    for (const address of addresses) {
+      if (address.family === 4 && isPrivateIPv4(address.address)) {
+        return false;
+      }
+
+      if (
+        address.family === 6 &&
+        (
+          address.address === "::1" ||
+          address.address.toLowerCase().startsWith("fc") ||
+          address.address.toLowerCase().startsWith("fd") ||
+          address.address.toLowerCase().startsWith("fe80:")
+        )
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validateUrl(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("URL is required");
+  }
+
+  if (value.length > 4000) {
+    throw new Error("URL is too long");
+  }
+
+  let parsed;
+
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new Error("Invalid URL");
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("Only HTTP and HTTPS URLs are allowed");
+  }
+
+  return parsed;
+}
+
+function rateLimit(req, res, next) {
+  const ip = getClientIp(req);
+  const now = Date.now();
+
+  let record = rateStore.get(ip);
+
+  if (!record || now - record.start > RATE_WINDOW_MS) {
+    record = {
+      start: now,
+      count: 0
+    };
+  }
+
+  record.count += 1;
+  rateStore.set(ip, record);
+
+  if (record.count > RATE_LIMIT) {
+    return res.status(429).json({
+      ok: false,
+      error: "Too many requests. Please try again later."
+    });
+  }
+
+  next();
+}
+
+function incrementActive(ip) {
+  const current = activeDownloads.get(ip) || 0;
+
+  if (current >= MAX_ACTIVE_PER_IP) {
+    return false;
+  }
+
+  activeDownloads.set(ip, current + 1);
+  return true;
+}
+
+function decrementActive(ip) {
+  const current = activeDownloads.get(ip) || 0;
+
+  if (current <= 1) {
+    activeDownloads.delete(ip);
+  } else {
+    activeDownloads.set(ip, current - 1);
+  }
+}
+
+function createTimeout(ms) {
+  const controller = new AbortController();
+
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, ms);
+
+  return {
+    controller,
+    clear() {
+      clearTimeout(timer);
+    }
+  };
+}
+
+function filenameFromUrl(url, contentType) {
+  try {
+    const parsed = new URL(url);
+    const lastPart = decodeURIComponent(
+      parsed.pathname.split("/").filter(Boolean).pop() || ""
+    );
+
+    if (lastPart && /^[a-zA-Z0-9._-]+$/.test(lastPart)) {
+      return lastPart.slice(0, 150);
+    }
+  } catch {}
+
+  const extensionMap = {
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+    "video/x-matroska": "mkv",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/wav": "wav",
+    "audio/webm": "webm",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif"
+  };
+
+  return `quicksave.${extensionMap[contentType] || "bin"}`;
+}
+
+function getContentType(response) {
+  return (
+    response.headers.get("content-type") || ""
+  )
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+}
+
+async function fetchSafe(url, options = {}) {
+  let currentUrl = url;
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
+    const parsed = validateUrl(currentUrl);
+
+    const safe = await isSafeHostname(parsed.hostname);
+
+    if (!safe) {
+      throw new Error("Blocked destination");
+    }
+
+    const timeout = createTimeout(
+      options.timeoutMs || INSPECT_TIMEOUT_MS
+    );
+
+    try {
+      const method = options.method || "GET";
+
+      const response = await fetch(currentUrl, {
+        method,
+        redirect: "manual",
+        signal: timeout.controller.signal,
+        headers: {
+          "User-Agent": "QuickSave/2.0",
+          "Accept": "*/*"
+        }
+      });
+
+      if (
+        [301, 302, 303, 307, 308].includes(response.status)
+      ) {
+        const location = response.headers.get("location");
+
+        if (!location) {
+          throw new Error("Redirect without location");
+        }
+
+        currentUrl = new URL(location, currentUrl).toString();
+
+        continue;
+      }
+
+      return {
+        response,
+        finalUrl: currentUrl
+      };
+    } finally {
+      timeout.clear();
+    }
+  }
+
+  throw new Error("Too many redirects");
+}
+
+async function inspectMedia(url) {
+  let result;
+
+  try {
+    result = await fetchSafe(url, {
+      method: "HEAD",
+      timeoutMs: INSPECT_TIMEOUT_MS
+    });
+
+    if (
+      result.response.status >= 400 ||
+      !result.response.ok
+    ) {
+      throw new Error("HEAD request failed");
+    }
+  } catch {
+    result = await fetchSafe(url, {
+      method: "GET",
+      timeoutMs: INSPECT_TIMEOUT_MS
+    });
+  }
+
+  const response = result.response;
+  const type = getContentType(response);
+
+  if (!allowedTypes.has(type)) {
+    throw new Error(
+      `Unsupported media type: ${type || "unknown"}`
+    );
+  }
+
+  const contentLengthHeader =
+    response.headers.get("content-length");
+
+  let size = null;
+
+  if (contentLengthHeader) {
+    const parsedSize = Number(contentLengthHeader);
+
+    if (Number.isFinite(parsedSize) && parsedSize >= 0) {
+      size = parsedSize;
+    }
+  }
+
+  if (size !== null && size > MAX_BYTES) {
+    throw new Error("File is larger than the 250 MB limit");
+  }
+
+  return {
+    mediaUrl: result.finalUrl,
+    type,
+    size,
+    filename: filenameFromUrl(result.finalUrl, type)
+  };
+}
+
+app.disable("x-powered-by");
+
+app.use(express.json({ limit: "32kb" }));
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "quicksave",
+    uptime: Math.round(process.uptime()),
+    active: Array.from(activeDownloads.values()).reduce(
+      (sum, value) => sum + value,
+      0
+    )
+  });
 });
 
-app.get("*splat",(req,res)=>res.sendFile(path.join(__dirname,"public","index.html")));
-const server=app.listen(PORT,()=>console.log(`QuickSave on ${PORT}`));
-server.requestTimeout=75000;server.headersTimeout=80000;server.keepAliveTimeout=65000;
-process.on("SIGTERM",()=>server.close(()=>process.exit(0)));
-process.on("SIGINT",()=>server.close(()=>process.exit(0)));
-process.on("uncaughtException",e=>console.error("UNCAUGHT",e));
-process.on("unhandledRejection",e=>console.error("UNHANDLED",e));
+app.post("/api/inspect", rateLimit, async (req, res) => {
+  try {
+    const parsed = validateUrl(req.body?.url);
+
+    const safe = await isSafeHostname(parsed.hostname);
+
+    if (!safe) {
+      return res.status(400).json({
+        ok: false,
+        error: "This destination is not allowed."
+      });
+    }
+
+    const media = await inspectMedia(parsed.toString());
+
+    return res.json({
+      ok: true,
+      ...media
+    });
+  } catch (error) {
+    console.error("Inspect error:", error.message);
+
+    return res.status(400).json({
+      ok: false,
+      error: error.message || "Unable to inspect this media."
+    });
+  }
+});
+
+app.get("/api/download", rateLimit, async (req, res) => {
+  const ip = getClientIp(req);
+
+  if (!incrementActive(ip)) {
+    return res.status(429).json({
+      ok: false,
+      error:
+        "Too many downloads are running from this connection."
+    });
+  }
+
+  let released = false;
+
+  const release = () => {
+    if (!released) {
+      released = true;
+      decrementActive(ip);
+    }
+  };
+
+  res.on("close", release);
+  res.on("finish", release);
+
+  try {
+    const parsed = validateUrl(req.query?.url);
+
+    const safe = await isSafeHostname(parsed.hostname);
+
+    if (!safe) {
+      release();
+
+      return res.status(400).json({
+        ok: false,
+        error: "This destination is not allowed."
+      });
+    }
+
+    const result = await fetchSafe(parsed.toString(), {
+      method: "GET",
+      timeoutMs: DOWNLOAD_TIMEOUT_MS
+    });
+
+    const upstream = result.response;
+
+    if (!upstream.ok) {
+      release();
+
+      return res.status(upstream.status).json({
+        ok: false,
+        error: `Upstream server returned ${upstream.status}`
+      });
+    }
+
+    const type = getContentType(upstream);
+
+    if (!allowedTypes.has(type)) {
+      release();
+
+      return res.status(415).json({
+        ok: false,
+        error: "Unsupported media type."
+      });
+    }
+
+    const contentLengthHeader =
+      upstream.headers.get("content-length");
+
+    let expectedSize = null;
+
+    if (contentLengthHeader) {
+      const parsedSize = Number(contentLengthHeader);
+
+      if (
+        Number.isFinite(parsedSize) &&
+        parsedSize >= 0
+      ) {
+        expectedSize = parsedSize;
+      }
+    }
+
+    if (expectedSize !== null && expectedSize > MAX_BYTES) {
+      release();
+
+      return res.status(413).json({
+        ok: false,
+        error: "File is larger than the 250 MB limit."
+      });
+    }
+
+    const filename = filenameFromUrl(
+      result.finalUrl,
+      type
+    );
+
+    res.statusCode = 200;
+    res.setHeader("Content-Type", type);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename.replace(/"/g, "")}"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+
+    if (expectedSize !== null) {
+      res.setHeader("Content-Length", String(expectedSize));
+    }
+
+    if (!upstream.body) {
+      throw new Error("Upstream response has no body");
+    }
+
+    let totalBytes = 0;
+
+    const reader = upstream.body.getReader();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        totalBytes += value.byteLength;
+
+        if (totalBytes > MAX_BYTES) {
+          try {
+            await reader.cancel();
+          } catch {}
+
+          if (!res.headersSent) {
+            res.status(413).json({
+              ok: false,
+              error: "File exceeded the 250 MB limit."
+            });
+          } else {
+            res.destroy(
+              new Error("File exceeded size limit")
+            );
+          }
+
+          return;
+        }
+
+        const canContinue = res.write(
+          Buffer.from(value)
+        );
+
+        if (!canContinue) {
+          await new Promise((resolve) => {
+            res.once("drain", resolve);
+          });
+        }
+      }
+
+      res.end();
+    } catch (streamError) {
+      console.error(
+        "Download stream error:",
+        streamError.message
+      );
+
+      if (!res.destroyed) {
+        res.destroy(streamError);
+      }
+    }
+  } catch (error) {
+    console.error("Download error:", error.message);
+
+    if (!res.headersSent) {
+      res.status(400).json({
+        ok: false,
+        error:
+          error.message ||
+          "Unable to download this media."
+      });
+    } else if (!res.destroyed) {
+      res.destroy(error);
+    }
+  } finally {
+    release();
+  }
+});
+
+const publicDir = path.join(__dirname, "public");
+
+app.use(express.static(publicDir, {
+  extensions: ["html"]
+}));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.use((error, req, res, next) => {
+  console.error("Express error:", error);
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  res.status(500).json({
+    ok: false,
+    error: "Internal server error"
+  });
+});
+
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log(
+    `QuickSave server running on port ${PORT}`
+  );
+});
+
+function shutdown(signal) {
+  console.log(`${signal} received. Shutting down...`);
+
+  server.close(() => {
+    console.log("Server closed.");
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error("Forced shutdown.");
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+});
