@@ -2,15 +2,14 @@ const express = require("express");
 const dns = require("dns").promises;
 const net = require("net");
 const path = require("path");
-// Nayi library jo Instagram/YouTube se direct video link nikalegi
 const youtubedl = require("youtube-dl-exec"); 
 
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
-const INSPECT_TIMEOUT = 25000; // Thoda time badha diya hai extractor ke liye
-const DOWNLOAD_TIMEOUT = 60000;
+const INSPECT_TIMEOUT = 30000; 
+const DOWNLOAD_TIMEOUT = 300000; // FIX: Badha kar 5 minute kar diya hai taki download fail na ho
 const MAX_REDIRECTS = 4;
 
 const MAX_ACTIVE_PER_IP = 3;
@@ -32,11 +31,14 @@ const ALLOWED_MIME = new Set([
   "image/png",
   "image/webp",
   "image/gif",
-  "application/octet-stream" // Added fallback for some direct links
+  "application/octet-stream" 
 ]);
 
 const rateMap = new Map();
 const activeMap = new Map();
+
+// FIX: Naya cache system banaya hai taki double-loading na ho
+const extractionCache = new Map();
 
 app.use(express.json({ limit: "100kb" }));
 
@@ -147,14 +149,13 @@ function isSocialMediaUrl(urlStr) {
     }
 }
 
-// Ye naya function Instagram/Youtube links ko actual video file (.mp4) me convert karta hai
 async function extractDirectVideoUrl(url) {
     try {
         const output = await youtubedl(url, {
             dumpSingleJson: true,
             noCheckCertificates: true,
             noWarnings: true,
-            format: "b" // Pre-merged video+audio format lata hai (ताकि video me awaaz bhi aaye)
+            format: "b" 
         });
 
         if (!output || (!output.url && !output.requested_formats)) {
@@ -199,84 +200,88 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   return response;
 }
 
-async function inspectMedia(rawUrl) {
-  let url = await validateUrl(rawUrl);
-  let targetUrl = url.toString();
-  let extractedTitle = null;
-
-  // Agar link Instagram/FB/YouTube ki hai, toh pehle uska hidden MP4 link nikalo
-  if (isSocialMediaUrl(targetUrl)) {
-      const extractedData = await extractDirectVideoUrl(targetUrl);
-      targetUrl = extractedData.url;
-      extractedTitle = extractedData.title;
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => { controller.abort(); }, INSPECT_TIMEOUT);
-
-  try {
-    let response;
-    try {
-      response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal });
-    } catch {
-      response = null;
-    }
-
-    let contentType = response ? getContentType(response) : "";
-    let contentLength = response ? Number(response.headers.get("content-length") || 0) : 0;
-
-    if (!response || !response.ok || !contentType) {
-      response = await fetchSafe(targetUrl, {
-        method: "GET",
-        headers: { Range: "bytes=0-0" },
-        signal: controller.signal
-      });
-      contentType = getContentType(response);
-      contentLength = Number(response.headers.get("content-length") || 0);
-      try { await response.body?.cancel(); } catch {}
-    }
-
-    if (!response.ok) {
-      return { ok: false, type: "error", message: `The media server returned HTTP ${response.status}.` };
-    }
-
-    if (!ALLOWED_MIME.has(contentType) && !contentType.includes("video")) {
-      return {
-        ok: false,
-        type: "unsupported",
-        contentType,
-        message: "This URL does not point to a supported public media file."
-      };
-    }
-
-    if (contentLength && contentLength > MAX_BYTES) {
-      return { ok: false, type: "too-large", message: "This media file is larger than the 250 MB limit." };
-    }
-
-    return {
-      ok: true,
-      type: "media",
-      url: targetUrl, 
-      originalUrl: url.toString(),
-      contentType: contentType || "video/mp4",
-      size: contentLength || null,
-      filename: filenameFromUrl(targetUrl, contentType, extractedTitle)
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.2" }));
+app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.3" }));
 
 app.post("/api/inspect", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
   if (!checkRateLimit(ip)) return res.status(429).json({ ok: false, message: "Too many requests. Please wait." });
 
   try {
-    const result = await inspectMedia(req.body?.url);
-    if (!result.ok) return res.status(400).json(result);
-    return res.json(result);
+    const rawUrl = req.body?.url;
+    let url = await validateUrl(rawUrl);
+    let targetUrl = url.toString();
+    let extractedTitle = null;
+  
+    if (isSocialMediaUrl(targetUrl)) {
+        if (extractionCache.has(targetUrl)) {
+            const cached = extractionCache.get(targetUrl);
+            targetUrl = cached.url;
+            extractedTitle = cached.title;
+        } else {
+            const extractedData = await extractDirectVideoUrl(targetUrl);
+            extractionCache.set(url.toString(), extractedData);
+            
+            setTimeout(() => extractionCache.delete(url.toString()), 30 * 60 * 1000);
+            
+            targetUrl = extractedData.url;
+            extractedTitle = extractedData.title;
+        }
+    }
+  
+    const controller = new AbortController();
+    const timer = setTimeout(() => { controller.abort(); }, INSPECT_TIMEOUT);
+  
+    try {
+      let response;
+      try {
+        response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal });
+      } catch {
+        response = null;
+      }
+  
+      let contentType = response ? getContentType(response) : "";
+      let contentLength = response ? Number(response.headers.get("content-length") || 0) : 0;
+  
+      if (!response || !response.ok || !contentType) {
+        response = await fetchSafe(targetUrl, {
+          method: "GET",
+          headers: { Range: "bytes=0-0" },
+          signal: controller.signal
+        });
+        contentType = getContentType(response);
+        contentLength = Number(response.headers.get("content-length") || 0);
+        try { await response.body?.cancel(); } catch {}
+      }
+  
+      if (!response.ok) {
+        return res.status(400).json({ ok: false, type: "error", message: `The media server returned HTTP ${response.status}.` });
+      }
+  
+      if (!ALLOWED_MIME.has(contentType) && !contentType.includes("video")) {
+        return res.status(400).json({
+          ok: false,
+          type: "unsupported",
+          contentType,
+          message: "This URL does not point to a supported public media file."
+        });
+      }
+  
+      if (contentLength && contentLength > MAX_BYTES) {
+        return res.status(400).json({ ok: false, type: "too-large", message: "This media file is larger than the 250 MB limit." });
+      }
+  
+      return res.json({
+        ok: true,
+        type: "media",
+        url: targetUrl, 
+        originalUrl: url.toString(),
+        contentType: contentType || "video/mp4",
+        size: contentLength || null,
+        filename: filenameFromUrl(targetUrl, contentType, extractedTitle)
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
     console.error("Inspect error:", error);
     return res.status(400).json({ ok: false, type: "error", message: error.message || "Unable to process this URL." });
@@ -289,14 +294,20 @@ app.get("/api/download", async (req, res) => {
   if (!acquireDownload(ip)) return res.status(429).json({ ok: false, message: "Too many downloads are running. Please wait." });
 
   try {
-    const rawUrl = req.query.url; // Note: Frontend ko /api/download?url=<Original_URL> bhejna chahiye
+    const rawUrl = req.query.url; 
     let targetUrl = (await validateUrl(rawUrl)).toString();
     let extractedTitle = null;
 
     if (isSocialMediaUrl(targetUrl)) {
-        const extractedData = await extractDirectVideoUrl(targetUrl);
-        targetUrl = extractedData.url;
-        extractedTitle = extractedData.title;
+        if (extractionCache.has(targetUrl)) {
+            const cached = extractionCache.get(targetUrl);
+            targetUrl = cached.url;
+            extractedTitle = cached.title;
+        } else {
+            const extractedData = await extractDirectVideoUrl(targetUrl);
+            targetUrl = extractedData.url;
+            extractedTitle = extractedData.title;
+        }
     }
 
     const controller = new AbortController();
