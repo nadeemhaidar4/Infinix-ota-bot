@@ -94,22 +94,174 @@ function showToast(message, ms = 2200) {
 }
 
 // =============================================================
-// HOME
+// HOME / ROOM CREATE / ROOM JOIN
 // =============================================================
 
+let homeBusy = false;
+let activePollingStarted = false;
+let activePollingTimer = null;
+
 function selectMode(mode) {
+    // Current game is the Spy mode. Keep the second button visually disabled
+    // instead of silently switching to another unsupported mode.
     selectedMode = "spy";
     $("mode-spy")?.classList.add("selected");
     $("mode-wordless")?.classList.remove("selected");
 }
 
-async function joinRoom(mode) {
-    const nameInput = $("username");
-    const capacityInput = $("capacity");
-    const roomInput = $("room-code");
+function setHomeBusy(busy, text = "") {
+    homeBusy = busy;
+    document.querySelectorAll(".join-btn, .secondary-btn").forEach(button => {
+        if (button.id === "mode-spy" || button.id === "mode-wordless") return;
+        button.disabled = busy;
+        button.style.pointerEvents = busy ? "none" : "";
+        button.style.opacity = busy ? ".65" : "";
+    });
+    setText("loading-text", text);
+}
 
-    username = (nameInput?.value || "").trim();
-    userCapacity = Number(capacityInput?.value || 6);
+async function readJson(response) {
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+        const body = await response.text();
+        throw new Error(
+            `Server returned an unexpected response (${response.status}). ${body.slice(0, 120)}`
+        );
+    }
+    const data = await response.json();
+    if (!response.ok || data?.error) {
+        throw new Error(data?.error || `Request failed (${response.status}).`);
+    }
+    return data;
+}
+
+async function createRoomAndJoin() {
+    const capacityInput = $("capacity");
+    const capacity = Number(capacityInput?.value || 6);
+
+    setHomeBusy(true, "Creating your room...");
+
+    try {
+        const response = await fetch(
+            `/create_new_room?capacity=${encodeURIComponent(capacity)}&mode=${encodeURIComponent(selectedMode)}`,
+            {
+                method: "GET",
+                cache: "no-store",
+                headers: { "Accept": "application/json" }
+            }
+        );
+
+        const data = await readJson(response);
+
+        room = String(data.room_id || "").padStart(4, "0");
+        userCapacity = Number(data.capacity || capacity);
+        selectedMode = String(data.mode || "spy");
+
+        if (!/^\d{4}$/.test(room)) {
+            throw new Error("The server returned an invalid Room ID.");
+        }
+
+        $("room-code").value = room;
+
+        await enterGameScreen(true);
+
+    } catch (error) {
+        console.error("Create room failed:", error);
+        setHomeBusy(false, "");
+        alert(error?.message || "Could not create room. Please try again.");
+    }
+}
+
+async function findRandomRoomAndJoin() {
+    const capacity = Number($("capacity")?.value || 6);
+
+    setHomeBusy(true, "Finding a room...");
+
+    try {
+        const response = await fetch(
+            `/get_random_room/${encodeURIComponent(capacity)}?mode=${encodeURIComponent(selectedMode)}`,
+            {
+                method: "GET",
+                cache: "no-store",
+                headers: { "Accept": "application/json" }
+            }
+        );
+
+        const data = await readJson(response);
+
+        room = String(data.room_id || "").padStart(4, "0");
+        userCapacity = Number(data.capacity || capacity);
+        selectedMode = String(data.mode || "spy");
+        $("room-code").value = room;
+
+        await enterGameScreen(false);
+
+    } catch (error) {
+        console.error("Random room failed:", error);
+        setHomeBusy(false, "");
+        alert(error?.message || "Could not find a room. Please try again.");
+    }
+}
+
+async function joinRoomById() {
+    const roomInput = $("room-code");
+    const code = String(roomInput?.value || "")
+        .replace(/\D/g, "")
+        .slice(0, 4);
+
+    roomInput.value = code;
+
+    if (code.length !== 4) {
+        alert("Enter the 4-digit Room ID.");
+        roomInput?.focus();
+        return;
+    }
+
+    setHomeBusy(true, "Checking Room ID...");
+
+    try {
+        // IMPORTANT: capacity is read from the server.
+        // The joining player does NOT need to choose the host's player count.
+        const response = await fetch(
+            `/room_info/${encodeURIComponent(code)}`,
+            {
+                method: "GET",
+                cache: "no-store",
+                headers: { "Accept": "application/json" }
+            }
+        );
+
+        const data = await readJson(response);
+
+        if (!data.joinable) {
+            if (data.state === "game_over") {
+                throw new Error("This game has already ended.");
+            }
+            if (data.state !== "waiting") {
+                throw new Error("This game has already started. You cannot join now.");
+            }
+            throw new Error("This room is full.");
+        }
+
+        room = code;
+        userCapacity = Number(data.capacity);
+        selectedMode = String(data.mode || "spy");
+        $("capacity").value = String(userCapacity);
+
+        await enterGameScreen(false);
+
+    } catch (error) {
+        console.error("Join room failed:", error);
+        setHomeBusy(false, "");
+        alert(error?.message || "Could not join that room.");
+    }
+}
+
+async function joinRoom(mode) {
+    if (homeBusy) return;
+
+    const nameInput = $("username");
+    username = String(nameInput?.value || "").trim();
 
     if (!username) {
         alert("Please enter your player name.");
@@ -122,57 +274,21 @@ async function joinRoom(mode) {
         return;
     }
 
-    if (userCapacity < 4 || userCapacity > 8) {
-        alert("Players must be between 4 and 8.");
-        return;
-    }
-
-    const cleanRoom = (roomInput?.value || "").replace(/\D/g, "").slice(0, 4);
-    roomInput.value = cleanRoom;
-
-    setText("loading-text", "Connecting...");
-
-    try {
-        if (mode === "create") {
-            const response = await fetch(
-                `/create_new_room?capacity=${userCapacity}&mode=${encodeURIComponent(selectedMode)}`,
-                { cache: "no-store" }
-            );
-            const data = await response.json();
-            if (!response.ok || data.error) throw new Error(data.error || "Could not create room.");
-            room = String(data.room_id);
-        } else if (mode === "random") {
-            const response = await fetch(
-                `/get_random_room/${userCapacity}?mode=${encodeURIComponent(selectedMode)}`,
-                { cache: "no-store" }
-            );
-            const data = await response.json();
-            if (!response.ok || data.error) throw new Error(data.error || "Could not find room.");
-            room = String(data.room_id);
-        } else {
-            if (cleanRoom.length !== 4) {
-                alert("Enter a 4-digit Room ID.");
-                roomInput?.focus();
-                setText("loading-text", "");
-                return;
-            }
-            room = cleanRoom;
-        }
-
-        await enterGameScreen();
-    } catch (error) {
-        console.error(error);
-        setText("loading-text", "");
-        alert(error?.message || "Server error. Try again.");
+    if (mode === "create") {
+        await createRoomAndJoin();
+    } else if (mode === "random") {
+        await findRandomRoomAndJoin();
+    } else if (mode === "join") {
+        await joinRoomById();
     }
 }
 
-async function enterGameScreen() {
+async function enterGameScreen(fromCreate = false) {
     hide("lobby-screen");
     show("game-screen");
 
     setText("room-name", room);
-    setText("room-status", "Connecting...");
+    setText("room-status", "Connecting to room...");
     setText("category-line", "Category: Waiting");
     setText("round-line", "Lobby");
 
@@ -184,63 +300,115 @@ async function enterGameScreen() {
     voted = false;
     selectedCategory = null;
     secretWord = "—";
+    currentCategory = "Waiting";
     updateWordAndCategory();
     renderPlayers();
 
-    connectWebSocket();
-
-    // Join Agora immediately, but do not ask for microphone until the user taps.
     try {
-        await initAgora(room);
+        await connectWebSocket();
     } catch (error) {
-        console.warn("Agora init failed", error);
-        showToast("Voice service could not connect. Text chat still works.", 3500);
-    }
-
-    setText("loading-text", "");
-}
-
-async function connectWebSocket() {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const url =
-        `${protocol}//${location.host}` +
-        `/ws/${encodeURIComponent(room)}/${encodeURIComponent(userCapacity)}/${encodeURIComponent(selectedMode)}` +
-        `?username=${encodeURIComponent(username)}`;
-
-    try {
-        ws = new WebSocket(url);
-    } catch (error) {
-        console.error(error);
-        alert("Could not connect to the game server.");
+        console.error("WebSocket connection failed:", error);
+        try { ws?.close(); } catch (_) {}
+        ws = null;
+        hide("game-screen");
+        show("lobby-screen");
+        setHomeBusy(false, "");
+        alert(error?.message || "Could not connect to the room.");
         return;
     }
 
-    ws.onopen = () => {
-        setText("room-status", "Waiting for players...");
-        addSystemMessage("Connected to the room.");
-        startActiveUserPolling();
-    };
+    // Agora join is intentionally AFTER the game socket connects.
+    // This prevents a failed voice service from making room creation appear broken.
+    try {
+        await initAgora(room);
+    } catch (error) {
+        console.warn("Agora init failed:", error);
+        showToast("Voice service is unavailable. Room/chat will still work.", 3500);
+    }
 
-    ws.onmessage = event => {
-        try {
-            handleServerMessage(JSON.parse(event.data));
-        } catch (error) {
-            console.error("Invalid server message", error);
-        }
-    };
+    setHomeBusy(false, "");
+    hide("lobby-screen");
+    show("game-screen");
 
-    ws.onerror = error => console.warn("WebSocket error", error);
-
-    ws.onclose = () => {
-        if (!$('game-screen')?.classList.contains("hidden") && !$('game-over-overlay')?.classList.contains("hidden")) return;
-        if (!$('game-screen')?.classList.contains("hidden")) {
-            addSystemMessage("Disconnected from server.");
-            setText("room-status", "Disconnected");
-        }
-    };
+    if (fromCreate) {
+        showToast(`Room ${room} created. Share this 4-digit ID with your friends.`, 4500);
+    }
 }
 
-let activePollingStarted = false;
+function connectWebSocket() {
+    return new Promise((resolve, reject) => {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const url =
+            `${protocol}//${location.host}` +
+            `/ws/${encodeURIComponent(room)}/${encodeURIComponent(userCapacity)}/${encodeURIComponent(selectedMode)}` +
+            `?username=${encodeURIComponent(username)}`;
+
+        let settled = false;
+
+        const fail = message => {
+            if (settled) return;
+            settled = true;
+            reject(new Error(message));
+        };
+
+        try {
+            ws = new WebSocket(url);
+        } catch (error) {
+            console.error(error);
+            fail("Could not open a connection to the game server.");
+            return;
+        }
+
+        ws.onopen = () => {
+            if (!settled) {
+                settled = true;
+                resolve();
+            }
+            setText("room-status", "Connected • waiting for players...");
+            addSystemMessage("Connected to the room.");
+            startActiveUserPolling();
+        };
+
+        ws.onmessage = event => {
+            try {
+                const data = JSON.parse(event.data);
+                handleServerMessage(data);
+
+                if (
+                    data?.type === "error" &&
+                    !settled
+                ) {
+                    fail(data.message || "Could not join this room.");
+                }
+
+            } catch (error) {
+                console.error("Invalid server message:", error);
+            }
+        };
+
+        ws.onerror = error => {
+            console.warn("WebSocket error:", error);
+            fail("Could not connect to the room. Please check the Room ID and try again.");
+        };
+
+        ws.onclose = event => {
+            if (!settled) {
+                fail(
+                    event?.code === 1008
+                        ? "The server rejected this room connection."
+                        : "The room connection closed before joining."
+                );
+                return;
+            }
+
+            if (!$('game-screen')?.classList.contains("hidden")) {
+                addSystemMessage("Disconnected from server.");
+                setText("room-status", "Disconnected");
+            }
+        };
+    });
+}
+
 function startActiveUserPolling() {
     if (activePollingStarted) return;
     activePollingStarted = true;
@@ -249,7 +417,7 @@ function startActiveUserPolling() {
         try {
             const response = await fetch(
                 `/get_active_users?client_id=${encodeURIComponent(clientId)}`,
-                { cache: "no-store" }
+                { cache: "no-store", headers: { "Accept": "application/json" } }
             );
             if (!response.ok) return;
             const data = await response.json();
@@ -258,7 +426,7 @@ function startActiveUserPolling() {
     };
 
     tick();
-    setInterval(tick, 5000);
+    activePollingTimer = setInterval(tick, 5000);
 }
 
 // =============================================================
@@ -273,6 +441,8 @@ function handleServerMessage(data) {
             players = Array.isArray(data.players) ? data.players : [];
             room = String(data.room || room);
             userCapacity = Number(data.capacity || userCapacity);
+            selectedMode = String(data.mode || selectedMode);
+            setText("room-name", room);
             renderPlayers();
             break;
 
@@ -1021,7 +1191,9 @@ window.addEventListener("load", () => {
     });
 
     nameInput?.addEventListener("keydown", e => {
-        if (e.key === "Enter") joinRoom("create");
+        if (e.key !== "Enter") return;
+        const code = String(roomInput?.value || "").replace(/\D/g, "");
+        joinRoom(code.length === 4 ? "join" : "create");
     });
 
     roomInput?.addEventListener("keydown", e => {
@@ -1042,6 +1214,12 @@ window.addEventListener("load", () => {
     }, { once: false, passive: true });
 
     updateMicUI(false);
+
+    const urlRoom = new URLSearchParams(location.search).get("room");
+    if (urlRoom && /^\d{4}$/.test(urlRoom)) {
+        roomInput.value = urlRoom;
+        roomInput.focus();
+    }
 });
 
 window.addEventListener("beforeunload", () => {
