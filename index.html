@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spy Word Game - Suspense Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen font-sans">
+
+    <div class="w-full max-w-md bg-gray-800 p-6 rounded-lg shadow-xl text-center">
+        <h1 class="text-3xl font-bold mb-4 text-red-500 tracking-wider">SPY WORD</h1>
+        
+        <!-- Join Section -->
+        <div id="join-section" class="space-y-4">
+            <input type="text" id="username" placeholder="Enter Your Name" class="w-full p-3 rounded bg-gray-700 text-white font-bold outline-none border-2 border-transparent focus:border-red-500">
+            <input type="text" id="room" placeholder="Room Code (e.g. 1234)" class="w-full p-3 rounded bg-gray-700 text-white font-bold outline-none border-2 border-transparent focus:border-red-500">
+            <button onclick="joinRoom()" class="w-full bg-red-600 hover:bg-red-700 p-3 rounded font-bold uppercase tracking-wide">Enter Game</button>
+        </div>
+
+        <!-- Game Section -->
+        <div id="game-section" class="hidden mt-4">
+            
+            <!-- Header (Word & Mic) -->
+            <div class="flex justify-between items-center mb-4 bg-gray-700 p-3 rounded">
+                <div>
+                    <p class="text-sm text-gray-400">Your Word</p>
+                    <p id="my-word" class="text-2xl font-bold text-green-400">Waiting...</p>
+                </div>
+                <div id="mic-status" class="bg-red-500 px-3 py-1 rounded text-sm font-bold animate-pulse">MIC OFF</div>
+            </div>
+
+            <p id="game-alert" class="text-yellow-400 font-bold mb-4 h-6">Waiting for 4 players...</p>
+
+            <!-- Turn Controls (End Turn Button) -->
+            <div id="turn-controls" class="hidden mb-4">
+                <button onclick="endMyTurn()" class="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded font-bold">I'm done speaking (End Turn)</button>
+            </div>
+
+            <!-- Voting Area -->
+            <div id="vote-area" class="hidden mb-4 border border-red-500 p-4 rounded bg-gray-900">
+                <p class="text-red-500 font-bold mb-2">Identify the Spy! Cast your vote:</p>
+                <div id="vote-buttons" class="grid grid-cols-2 gap-2"></div>
+            </div>
+
+            <!-- Always ON Chat -->
+            <div id="messages" class="h-48 overflow-y-auto bg-black p-3 text-left text-sm mb-4 rounded border border-gray-600 flex flex-col gap-1"></div>
+            
+            <div class="flex gap-2">
+                <input type="text" id="chat-input" placeholder="Type message..." class="flex-1 p-2 rounded bg-gray-700 outline-none">
+                <button onclick="sendChat()" class="bg-gray-600 px-4 rounded font-bold hover:bg-gray-500">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
