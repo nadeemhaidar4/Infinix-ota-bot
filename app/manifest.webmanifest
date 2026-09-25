@@ -1,0 +1,10 @@
+{
+ "name":"QuickSave Media Saver",
+ "short_name":"QuickSave",
+ "start_url":"/",
+ "display":"standalone",
+ "background_color":"#080b16",
+ "theme_color":"#080b16",
+ "description":"QuickSave authorized media saver",
+ "icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
