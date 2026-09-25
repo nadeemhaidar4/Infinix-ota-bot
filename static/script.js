@@ -3,6 +3,7 @@ let username = "";
 let room = "";
 let isAlive = true;
 let userCapacity = 4;
+let activePlayersList = [];
 
 const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4"; 
 let rtcClient;
@@ -10,18 +11,11 @@ let localAudioTrack;
 
 let currentTimerInterval;
 let currentTimeout;
+const TURN_TIME_LIMIT = 30; // 30 Seconds for turn
 
-// Unique ID for Live Count
 const myClientId = Math.random().toString(36).substring(2, 15);
 
-// Ensure audio works by resuming Audio Context
-async function resumeAudio() {
-    if (rtcClient && rtcClient.getAudioContext().state === 'suspended') {
-        await rtcClient.getAudioContext().resume();
-    }
-}
-
-// --- Sound Function ---
+// Sound effects map
 function playSound(type) {
     let sound;
     switch(type) {
@@ -36,6 +30,18 @@ function playSound(type) {
     if (sound) {
         sound.currentTime = 0;
         sound.play().catch(e => console.log("Audio play blocked until user interacts"));
+    }
+}
+
+// Force resume audio context for browsers blocking auto-play
+async function playAudioTrack(user) {
+    try {
+        if(rtcClient.getAudioContext().state === 'suspended') {
+            await rtcClient.getAudioContext().resume();
+        }
+        user.audioTrack.play();
+    } catch(err) {
+        console.error("Audio playback failed", err);
     }
 }
 
@@ -107,11 +113,15 @@ async function joinRoom(mode) {
 async function initAgora(channelName, uid) {
     rtcClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
     
+    // Resume audio context directly on first interaction
+    if(rtcClient.getAudioContext().state === 'suspended') {
+        rtcClient.getAudioContext().resume();
+    }
+
     rtcClient.on("user-published", async (user, mediaType) => {
         await rtcClient.subscribe(user, mediaType);
         if (mediaType === "audio") {
-            await resumeAudio();
-            user.audioTrack.play();
+            playAudioTrack(user);
         }
     });
 
@@ -151,41 +161,55 @@ async function setMicState(unmute) {
 function updateMicUI(isOn) {
     const micUI = document.getElementById("mic-status");
     if (isOn) {
-        micUI.innerHTML = '<div class="w-2 h-2 rounded-full bg-white animate-pulse"></div><span>MIC ON</span>';
-        micUI.classList.remove("bg-red-600");
-        micUI.classList.add("bg-green-600");
+        micUI.innerHTML = '<div class="w-2.5 h-2.5 rounded-full bg-white animate-pulse"></div><span>MIC ON</span>';
+        micUI.classList.replace("bg-red-600", "bg-green-600");
     } else {
-        micUI.innerHTML = '<div class="w-2 h-2 rounded-full bg-white"></div><span>MIC OFF</span>';
-        micUI.classList.remove("bg-green-600");
-        micUI.classList.add("bg-red-600");
+        micUI.innerHTML = '<div class="w-2.5 h-2.5 rounded-full bg-white"></div><span>MIC OFF</span>';
+        micUI.classList.replace("bg-green-600", "bg-red-600");
     }
+}
+
+function updateActivePlayersList(playersArr, currentSpeaker) {
+    const listDiv = document.getElementById("active-players-list");
+    listDiv.innerHTML = "";
+    playersArr.forEach(p => {
+        let micIcon = (p === currentSpeaker) ? '🔊' : '🔇';
+        let color = (p === username) ? 'text-blue-400 font-bold' : 'text-gray-300';
+        listDiv.innerHTML += `<span class="${color} bg-gray-800 px-2 py-1 rounded text-xs">${micIcon} ${p}</span>`;
+    });
 }
 
 function startTurnTimer() {
     playSound('turn');
-    let timeLeft = 15;
+    let timeLeft = TURN_TIME_LIMIT; // 30 seconds
     const timerContainer = document.getElementById("turn-timer-container");
     const progressBar = document.getElementById("turn-progress-bar");
     const countdownTxt = document.getElementById("turn-countdown");
     
     timerContainer.classList.remove("hidden");
     progressBar.style.width = "100%";
-    progressBar.classList.replace("bg-red-500", "bg-yellow-400");
-    countdownTxt.innerText = `YOUR TURN: ${timeLeft}s`;
-    countdownTxt.classList.replace("text-red-500", "text-yellow-400");
+    progressBar.classList.replace("bg-red-500", "bg-green-500");
+    progressBar.classList.replace("bg-yellow-400", "bg-green-500");
+    countdownTxt.innerText = `YOUR TURN TO SPEAK: ${timeLeft}s`;
+    countdownTxt.classList.remove("text-red-500", "text-yellow-400");
+    countdownTxt.classList.add("text-green-400");
 
     clearInterval(currentTimerInterval);
     clearTimeout(currentTimeout);
 
     currentTimerInterval = setInterval(() => {
         timeLeft--;
-        countdownTxt.innerText = `YOUR TURN: ${timeLeft}s`;
-        progressBar.style.width = `${(timeLeft / 15) * 100}%`;
+        countdownTxt.innerText = `YOUR TURN TO SPEAK: ${timeLeft}s`;
+        progressBar.style.width = `${(timeLeft / TURN_TIME_LIMIT) * 100}%`;
         
+        if(timeLeft === 10) {
+            progressBar.classList.replace("bg-green-500", "bg-yellow-400");
+            countdownTxt.classList.replace("text-green-400", "text-yellow-400");
+        }
         if(timeLeft === 5) {
             playSound('timeout');
-            countdownTxt.classList.replace("text-yellow-400", "text-red-500");
             progressBar.classList.replace("bg-yellow-400", "bg-red-500");
+            countdownTxt.classList.replace("text-yellow-400", "text-red-500");
         }
         if(timeLeft <= 0) {
             clearInterval(currentTimerInterval);
@@ -194,7 +218,7 @@ function startTurnTimer() {
 
     currentTimeout = setTimeout(() => {
         endMyTurn();
-    }, 15000);
+    }, TURN_TIME_LIMIT * 1000);
 }
 
 function stopTurnTimer() {
@@ -207,17 +231,27 @@ function handleServerMessage(data) {
     const msgDiv = document.getElementById("messages");
     const alertBox = document.getElementById("game-alert");
 
+    // Chat Format Fix (No 'System', straight player names)
     if (data.type === "chat") {
-        msgDiv.innerHTML += `<p><b class="${data.sender==='System' ? 'text-yellow-500' : 'text-blue-400'}">${data.sender}:</b> <span class="text-gray-200">${data.text}</span></p>`;
+        if(data.sender === "System") {
+            msgDiv.innerHTML += `<p class="text-center text-xs text-gray-500 italic my-1">${data.text}</p>`;
+        } else {
+            let color = data.sender === username ? 'text-blue-400' : 'text-gray-300';
+            msgDiv.innerHTML += `<p><b class="${color}">${data.sender}:</b> <span class="text-white">${data.text}</span></p>`;
+        }
     } 
     else if (data.type === "game_start") {
         playSound('start');
         isAlive = true;
+        activePlayersList = data.players;
         document.getElementById("my-word").innerText = data.word;
-        msgDiv.innerHTML += `<p class="text-green-500 font-bold text-center mt-2">-- GAME STARTED --</p>`;
+        document.getElementById("players-list-container").classList.remove("hidden");
+        updateActivePlayersList(activePlayersList, null);
+        msgDiv.innerHTML += `<p class="text-green-500 font-bold text-center mt-2 border-y border-green-800 py-1">MISSION COMMENCED</p>`;
     }
     else if (data.type === "turn_update") {
         alertBox.innerText = data.message;
+        updateActivePlayersList(activePlayersList, data.current_player);
         if (data.current_player === username && isAlive) {
             setMicState(true);
             startTurnTimer();
@@ -230,17 +264,18 @@ function handleServerMessage(data) {
         playSound('timeout');
         setMicState(false); 
         stopTurnTimer();
+        updateActivePlayersList(activePlayersList, null);
         if (isAlive) {
             const voteArea = document.getElementById("vote-area");
             const voteBtns = document.getElementById("vote-buttons");
             voteBtns.innerHTML = "";
             data.players.forEach(p => {
                 if (p !== username) {
-                    voteBtns.innerHTML += `<button onclick="playSound('click'); castVote('${p}')" class="btn btn-dark p-2 rounded-lg font-bold">${p}</button>`;
+                    voteBtns.innerHTML += `<button onclick="playSound('click'); castVote('${p}')" class="btn btn-dark p-2.5 rounded-lg font-bold text-sm shadow-md">${p}</button>`;
                 }
             });
             voteArea.classList.remove("hidden");
-            alertBox.innerText = "Time to Vote!";
+            alertBox.innerText = "Time to Vote! Identify the Spy.";
         }
     }
     else if (data.type === "reaction_phase") {
@@ -250,14 +285,14 @@ function handleServerMessage(data) {
         if (username === data.dead_player) {
             isAlive = false;
             setMicState(false);
-            alertBox.innerText = "You are DEAD. You can only chat now.";
+            alertBox.innerText = "You are DEAD. You can only listen and chat.";
         } else if (isAlive) {
             setMicState(true);
         }
     }
     else if (data.type === "new_round") {
         playSound('start');
-        msgDiv.innerHTML += `<p class="text-blue-400 font-bold text-center mt-2">-- NEXT ROUND --</p>`;
+        msgDiv.innerHTML += `<p class="text-blue-400 font-bold text-center mt-2 border-y border-blue-800 py-1">NEXT ROUND</p>`;
         setMicState(false);
     }
     else if (data.type === "game_over") {
@@ -267,9 +302,9 @@ function handleServerMessage(data) {
             playSound('over');
         }
         alertBox.innerText = data.message;
-        alertBox.className = data.winner === 'spy' ? "text-red-500 font-bold text-lg text-center" : "text-green-500 font-bold text-lg text-center";
+        alertBox.className = data.winner === 'spy' ? "text-red-500 font-black text-xl text-center uppercase tracking-widest" : "text-green-500 font-black text-xl text-center uppercase tracking-widest";
         document.getElementById("vote-area").classList.add("hidden");
-        setMicState(true);
+        setMicState(true); // Open mic for all after game over
     }
     msgDiv.scrollTop = msgDiv.scrollHeight;
 }
@@ -283,7 +318,16 @@ function sendChat() {
     }
 }
 
+// Ensure Enter key sends chat
+document.getElementById("chat-input").addEventListener("keypress", function(event) {
+    if (event.key === "Enter") {
+        event.preventDefault();
+        sendChat();
+    }
+});
+
 function endMyTurn() {
+    playSound('click');
     ws.send(JSON.stringify({ action: "end_turn" }));
     stopTurnTimer();
     setMicState(false);
@@ -291,12 +335,12 @@ function endMyTurn() {
 
 function castVote(player) {
     ws.send(JSON.stringify({ action: "cast_vote", vote: player }));
-    document.getElementById("vote-area").innerHTML = `<p class="text-green-400 text-center w-full font-bold">Voted for ${player}</p>`;
+    document.getElementById("vote-area").innerHTML = `<p class="text-green-400 text-center w-full font-bold">Target locked: ${player}</p>`;
 }
 
 function leaveGame() {
     playSound('click');
-    if(confirm("Are you sure you want to leave the game?")) {
+    if(confirm("Abandon mission and return to lobby?")) {
         window.location.reload();
     }
 }
