@@ -1,723 +1,480 @@
-// =========================================================
-// GLOBAL STATE
-// =========================================================
-
 let ws = null;
 
-let username = "";
 let room = "";
-
-let selectedGameMode = "spy";
-let userCapacity = 6;
-
-let isAlive = true;
-let isReady = false;
+let username = "";
+let capacity = 6;
 
 let players = [];
+let categories = [];
+let selectedCategory = null;
+
+let isReady = false;
+let isAlive = true;
 let currentSpeaker = null;
 
-let currentTimerInterval = null;
-let currentTimerTimeout = null;
+let secretWord = "—";
 
-let rtcClient = null;
-let localAudioTrack = null;
-let agoraJoined = false;
-let micBusy = false;
+let timerHandle = null;
+let timerEnd = 0;
 
-let soundEnabled = true;
+let soundOn = true;
 
-let turnSeconds = 30;
-let activeTurnId = 0;
+/* WebRTC */
+let micPermission = false;
+let micOn = false;
+let localStream = null;
 
-const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4";
-
-const myClientId =
-    Math.random().toString(36).substring(2, 15) +
-    Date.now().toString(36);
+let peerConnections = new Map();
+let pendingIce = new Map();
+let rtcStarted = false;
 
 
-// =========================================================
-// DOM HELPERS
-// =========================================================
-
-function $(id) {
-    return document.getElementById(id);
-}
+const $ = id => document.getElementById(id);
 
 
-function setText(id, text) {
-    const el = $(id);
-
-    if (el) {
-        el.textContent = text;
-    }
+function esc(value) {
+    return String(value ?? "").replace(
+        /[&<>'"]/g,
+        c => ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            "'": "&#39;",
+            '"': "&quot;"
+        }[c])
+    );
 }
 
 
 function show(id) {
-    const el = $(id);
-
-    if (el) {
-        el.classList.remove("hidden");
-    }
+    $(id)?.classList.remove("hidden");
 }
 
 
 function hide(id) {
-    const el = $(id);
+    $(id)?.classList.add("hidden");
+}
 
-    if (el) {
-        el.classList.add("hidden");
+
+function send(data) {
+    if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
     }
 }
 
 
-// =========================================================
-// HTML ESCAPE
-// =========================================================
+/* -------------------------------------------------------
+   JOIN ROOM
+------------------------------------------------------- */
 
-function escapeHTML(value) {
-    return String(value ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
+async function joinRoom() {
 
-
-// =========================================================
-// SOUND
-// =========================================================
-
-function playSound(type) {
-
-    if (!soundEnabled) {
-        return;
-    }
-
-    let el = null;
-
-    switch (type) {
-
-        case "click":
-            el = $("sound-click");
-            break;
-
-        case "start":
-            el = $("sound-start");
-            break;
-
-        case "turn":
-            el = $("sound-turn");
-            break;
-
-        case "timeout":
-            el = $("sound-timeout");
-            break;
-
-        case "win":
-            el = $("sound-win");
-            break;
-
-        case "lose":
-            el = $("sound-lose");
-            break;
-    }
-
-    if (!el) {
-        return;
-    }
-
-    try {
-        el.currentTime = 0;
-
-        const promise = el.play();
-
-        if (promise && typeof promise.catch === "function") {
-            promise.catch(() => {});
-        }
-    } catch (_) {}
-}
-
-
-// =========================================================
-// MODE
-// =========================================================
-
-function selectGameMode(mode) {
-
-    playSound("click");
-
-    selectedGameMode =
-        mode === "wordless"
-            ? "wordless"
-            : "spy";
-
-    const spyButton = $("mode-spy");
-    const wordlessButton = $("mode-wordless");
-
-    spyButton.classList.remove("selected");
-    wordlessButton.classList.remove("selected");
-
-    if (selectedGameMode === "spy") {
-        spyButton.classList.add("selected");
-    } else {
-        wordlessButton.classList.add("selected");
-    }
-}
-
-
-// =========================================================
-// ACTIVE USERS
-// =========================================================
-
-async function fetchActiveUsers() {
-
-    try {
-
-        const response = await fetch(
-            `/get_active_users?client_id=${encodeURIComponent(myClientId)}`,
-            {
-                cache: "no-store"
-            }
-        );
-
-        if (!response.ok) {
-            return;
-        }
-
-        const data = await response.json();
-
-        setText(
-            "active-users-count",
-            data.active_users ?? 0
-        );
-
-    } catch (_) {}
-}
-
-
-window.addEventListener(
-    "load",
-    () => {
-
-        fetchActiveUsers();
-
-        setInterval(
-            fetchActiveUsers,
-            5000
-        );
-
-        $("chat-input").addEventListener(
-            "keydown",
-            function(event) {
-
-                if (event.key === "Enter") {
-
-                    event.preventDefault();
-
-                    sendChat();
-                }
-            }
-        );
-    }
-);
-
-
-// =========================================================
-// JOIN ROOM
-// =========================================================
-
-async function joinRoom(mode) {
-
-    playSound("click");
-
-    const nameInput = $("username");
-    const capacityInput = $("capacity");
-
-    username = nameInput.value.trim();
-
-    userCapacity =
-        Number(capacityInput.value) || 6;
+    username = $("name-input").value.trim();
+    capacity = Number($("capacity").value) || 6;
+    room = $("room-input").value.trim();
 
     if (!username) {
-
-        alert("Please enter your player name.");
-
-        nameInput.focus();
-
+        alert("Enter your name first.");
+        $("name-input").focus();
         return;
     }
-
-    if (username.length > 20) {
-
-        alert("Player name must be 20 characters or less.");
-
-        return;
-    }
-
-    // Basic validation.
-    username = username.replace(
-        /[\u0000-\u001F\u007F]/g,
-        ""
-    ).trim();
-
-    if (!username) {
-        alert("Please enter a valid player name.");
-        return;
-    }
-
-    $("loading-text").textContent =
-        mode === "random"
-            ? "Finding a room..."
-            : mode === "create"
-                ? "Creating room..."
-                : "Joining room...";
-
-    let roomId = "";
 
     try {
 
-        if (mode === "random") {
+        if (!room) {
 
             const response = await fetch(
-                `/get_random_room/${userCapacity}?mode=${encodeURIComponent(selectedGameMode)}`,
-                {
-                    cache: "no-store"
-                }
+                `/create_new_room?capacity=${capacity}`
             );
 
             const data = await response.json();
 
-            if (!response.ok || data.error) {
-                throw new Error(
-                    data.error || "Unable to find room."
-                );
+            if (data.error) {
+                throw new Error(data.error);
             }
 
-            roomId = String(data.room_id);
-
-        } else if (mode === "create") {
-
-            const response = await fetch(
-                `/create_new_room?capacity=${userCapacity}&mode=${encodeURIComponent(selectedGameMode)}`,
-                {
-                    cache: "no-store"
-                }
-            );
-
-            const data = await response.json();
-
-            if (!response.ok || data.error) {
-                throw new Error(
-                    data.error || "Unable to create room."
-                );
-            }
-
-            roomId = String(data.room_id);
-
-        } else {
-
-            const entered = prompt(
-                "Enter Room Code:"
-            );
-
-            if (!entered) {
-
-                $("loading-text").textContent = "";
-
-                return;
-            }
-
-            roomId = entered.trim();
-
-            if (!roomId) {
-
-                $("loading-text").textContent = "";
-
-                return;
-            }
+            room = data.room_id;
         }
+
+        connectWS();
 
     } catch (error) {
-
-        console.error(error);
-
-        $("loading-text").textContent = "";
 
         alert(
-            error?.message ||
-            "Server error. Please try again."
-        );
-
-        return;
-    }
-
-    room = roomId;
-
-    $("loading-text").textContent =
-        `Connecting to room ${room}...`;
-
-    // Change screen.
-    hide("lobby-screen");
-    show("game-screen");
-
-    setText(
-        "room-name",
-        room
-    );
-
-    setText(
-        "room-status",
-        "Connecting..."
-    );
-
-    isReady = false;
-    isAlive = true;
-    players = [];
-    currentSpeaker = null;
-
-    resetReadyButton();
-    stopTurnTimer();
-    closeAllOverlays();
-
-    renderPlayers();
-
-    connectWebSocket();
-
-    // Join Agora without opening the microphone.
-    // Microphone is created only when our turn starts.
-    try {
-
-        await initAgora(
-            room
-        );
-
-    } catch (error) {
-
-        console.error(
-            "Agora initialization error:",
-            error
-        );
-
-        // Game can continue even when voice fails.
-        addSystemMessage(
-            "Voice chat could not initialize. Text chat is still available."
+            error.message ||
+            "Could not create room."
         );
     }
-
-    $("loading-text").textContent = "";
 }
 
 
-// =========================================================
-// WEBSOCKET
-// =========================================================
-
-function connectWebSocket() {
+function connectWS() {
 
     const protocol =
-        window.location.protocol === "https:"
-            ? "wss:"
-            : "ws:";
+        location.protocol === "https:"
+            ? "wss"
+            : "ws";
 
-    const wsUrl =
-        `${protocol}//${window.location.host}` +
-        `/ws/${encodeURIComponent(room)}` +
-        `/${encodeURIComponent(userCapacity)}` +
-        `/${encodeURIComponent(selectedGameMode)}` +
-        `?username=${encodeURIComponent(username)}`;
-
-    try {
-
-        ws = new WebSocket(wsUrl);
-
-    } catch (error) {
-
-        console.error(error);
-
-        alert("Could not connect to the game server.");
-
-        return;
-    }
-
-    ws.onopen = function() {
-
-        setText(
-            "room-status",
-            "Waiting for players..."
-        );
-
-        addSystemMessage(
-            "Connected to the room."
-        );
-    };
-
-
-    ws.onmessage = function(event) {
-
-        try {
-
-            const data =
-                JSON.parse(event.data);
-
-            handleServerMessage(data);
-
-        } catch (error) {
-
-            console.error(
-                "Invalid server message:",
-                error
-            );
-        }
-    };
-
-
-    ws.onerror = function(error) {
-
-        console.error(
-            "WebSocket error:",
-            error
-        );
-    };
-
-
-    ws.onclose = function() {
-
-        if (
-            $("game-screen").classList.contains("hidden")
-        ) {
-            return;
-        }
-
-        if (
-            $("game-over-overlay").classList.contains("hidden")
-        ) {
-
-            addSystemMessage(
-                "Disconnected from server."
-            );
-
-            setText(
-                "room-status",
-                "Disconnected"
-            );
-
-        }
-    };
-}
-
-
-// =========================================================
-// SEND WS
-// =========================================================
-
-function sendWS(payload) {
-
-    if (!ws) {
-        return false;
-    }
-
-    if (ws.readyState !== WebSocket.OPEN) {
-        return false;
-    }
-
-    try {
-
-        ws.send(
-            JSON.stringify(payload)
-        );
-
-        return true;
-
-    } catch (error) {
-
-        console.error(error);
-
-        return false;
-    }
-}
-
-
-// =========================================================
-// READY
-// =========================================================
-
-function toggleReady() {
-
-    playSound("click");
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-
-        alert("Not connected to the room.");
-
-        return;
-    }
-
-    if (
-        !$("ready-button") ||
-        $("ready-button").disabled
-    ) {
-        return;
-    }
-
-    isReady = !isReady;
-
-    sendWS({
-        action: "set_ready",
-        ready: isReady
-    });
-
-    updateReadyButton();
-}
-
-
-function resetReadyButton() {
-
-    isReady = false;
-
-    const button = $("ready-button");
-
-    if (!button) {
-        return;
-    }
-
-    button.disabled = false;
-
-    button.classList.remove(
-        "ready-state",
-        "cancel-state"
+    ws = new WebSocket(
+        `${protocol}://${location.host}/ws/${encodeURIComponent(room)}/${capacity}?username=${encodeURIComponent(username)}`
     );
 
-    button.textContent = "Get Ready";
+    ws.onopen = () => {
+        addSystem("Connected to room.");
+    };
+
+    ws.onmessage = event => {
+
+        try {
+            handle(JSON.parse(event.data));
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    ws.onclose = () => {
+
+        if (
+            $("game") &&
+            !$("game").classList.contains("hidden")
+        ) {
+            addSystem(
+                "Connection closed. Refresh to reconnect."
+            );
+        }
+    };
+
+    ws.onerror = () => {
+        addSystem("Connection error.");
+    };
 }
 
 
-function updateReadyButton() {
+/* -------------------------------------------------------
+   SERVER EVENTS
+------------------------------------------------------- */
 
-    const button = $("ready-button");
-
-    if (!button) {
-        return;
-    }
-
-    if (isReady) {
-
-        button.classList.add(
-            "ready-state"
-        );
-
-        button.classList.remove(
-            "cancel-state"
-        );
-
-        button.textContent =
-            "✓ Ready • Cancel";
-
-    } else {
-
-        button.classList.remove(
-            "ready-state"
-        );
-
-        button.classList.add(
-            "cancel-state"
-        );
-
-        button.textContent =
-            "Get Ready";
-    }
-}
-
-
-function hideReadyButton() {
-
-    const button = $("ready-button");
-
-    if (button) {
-        button.classList.add("hidden");
-    }
-}
-
-
-function showReadyButton() {
-
-    const button = $("ready-button");
-
-    if (!button) {
-        return;
-    }
-
-    button.classList.remove("hidden");
-}
-
-
-// =========================================================
-// SERVER MESSAGES
-// =========================================================
-
-function handleServerMessage(data) {
-
-    if (!data || typeof data !== "object") {
-        return;
-    }
+function handle(data) {
 
     switch (data.type) {
 
-        case "error":
+        case "connected":
 
-            alert(
-                data.message ||
-                "Something went wrong."
+            room = data.room;
+            capacity = data.capacity;
+            username = data.username;
+
+            players = data.players || [];
+
+            $("room-id").textContent = room;
+
+            show("game");
+            hide("home");
+
+            renderPlayers();
+
+            isAlive =
+                players.find(
+                    p => p.username === username
+                )?.alive !== false;
+
+            startRTC();
+
+            break;
+
+
+        case "lobby_update":
+
+            players = data.players || players;
+
+            renderPlayers();
+
+            if (data.state === "waiting") {
+
+                show("ready-overlay");
+
+                $("ready-status").textContent =
+                    `Players: ${players.length}/${data.capacity}. Everyone must be ready.`;
+
+                $("ready-button").textContent =
+                    isReady
+                        ? "Ready ✓"
+                        : "I'm Ready";
+
+            } else {
+
+                hide("ready-overlay");
+            }
+
+            syncRTCPlayers();
+
+            break;
+
+
+        case "category_select":
+
+            categories = data.categories || [];
+
+            selectedCategory = null;
+
+            buildCategories();
+
+            show("category-overlay");
+
+            startCountdown(
+                "category-count",
+                data.seconds || 9,
+                null
             );
 
             break;
 
 
-        // -------------------------------------------------
-        // LOBBY
-        // -------------------------------------------------
+        case "category_vote_update":
 
-        case "lobby_update":
+            updateCategoryCounts(
+                data.counts || {}
+            );
 
-            players =
-                Array.isArray(data.players)
-                    ? data.players
-                    : [];
+            break;
 
-            currentSpeaker =
-                data.current_speaker || null;
+
+        case "category_result":
+
+            hide("category-overlay");
+
+            $("chosen-category").textContent =
+                data.category || "Random";
+
+            show("category-result-overlay");
+
+            startCountdown(
+                "result-count",
+                data.seconds || 3,
+                () => hide("category-result-overlay")
+            );
+
+            break;
+
+
+        case "role_info":
+
+            secretWord = data.word || "—";
+
+            isAlive = true;
+
+            setWordLine(
+                data.category,
+                secretWord
+            );
+
+            $("round-line").textContent =
+                `Round ${data.round || 1}`;
+
+            break;
+
+
+        case "round_start":
+
+            players = data.players || players;
+
+            isAlive =
+                players.find(
+                    p => p.username === username
+                )?.alive !== false;
+
+            currentSpeaker = null;
+
+            setMic(false);
+
+            $("round-line").textContent =
+                `Round ${data.round}`;
 
             renderPlayers();
 
-            setText(
-                "room-status",
-                getStatusText(data)
+            addSystem(
+                `Round ${data.round} description starts.`
             );
 
-            if (data.state === "waiting") {
+            updateMicUI();
 
-                showReadyButton();
+            syncRTCPlayers();
 
-                $("ready-button").disabled = false;
+            break;
+
+
+        case "turn_update":
+
+            currentSpeaker =
+                data.current_player;
+
+            $("round-line").textContent =
+                `Round ${data.round || 1}`;
+
+            startCountdown(
+                "timer",
+                data.seconds || 30,
+                null
+            );
+
+            renderPlayers();
+
+            updateMicUI();
+
+            if (currentSpeaker === username) {
+
+                addSystem(
+                    "Your turn. Describe your word without saying it."
+                );
+
+                setMic(true);
 
             } else {
 
-                hideReadyButton();
-
+                setMic(false);
             }
 
             break;
 
 
-        // -------------------------------------------------
-        // CHAT
-        // -------------------------------------------------
+        case "start_voting":
+
+            currentSpeaker = null;
+
+            setMic(false);
+
+            startCountdown(
+                "timer",
+                data.seconds || 30,
+                null
+            );
+
+            renderPlayers();
+
+            updateMicUI();
+
+            openVoting(
+                data.players || []
+            );
+
+            addSystem(
+                `Round ${data.round || 1} description is over. Vote starts.`
+            );
+
+            break;
+
+
+        case "vote_update":
+
+            $("vote-status").textContent =
+                `Votes received: ${data.count || 0}/${data.total || 0}`;
+
+            break;
+
+
+        case "vote_error":
+
+            $("vote-status").textContent =
+                data.message || "Vote error.";
+
+            break;
+
+
+        case "vote_tie":
+
+            hide("vote-overlay");
+
+            addSystem(
+                data.message ||
+                "Vote tie. Vote again."
+            );
+
+            setTimeout(
+                () => openVoting(
+                    data.players || []
+                ),
+                500
+            );
+
+            break;
+
+
+        case "vote_result":
+
+            hide("vote-overlay");
+
+            addSystem(
+                `Vote result: No.${data.number} ${data.eliminated} was selected.`
+            );
+
+            break;
+
+
+        case "reaction_phase":
+
+            currentSpeaker = null;
+
+            setMic(false);
+
+            if (data.dead_player === username) {
+                isAlive = false;
+            }
+
+            markDead(
+                data.dead_player
+            );
+
+            startCountdown(
+                "timer",
+                data.seconds || 10,
+                null
+            );
+
+            showEvent(
+                "Elimination",
+                data.message ||
+                `${data.dead_player} is out.`
+            );
+
+            updateMicUI();
+
+            break;
+
+
+        case "new_round":
+
+            hide("event-overlay");
+
+            players = data.players || players;
+
+            isAlive =
+                players.find(
+                    p => p.username === username
+                )?.alive !== false;
+
+            currentSpeaker = null;
+
+            setMic(false);
+
+            $("round-line").textContent =
+                `Round ${data.round}`;
+
+            renderPlayers();
+
+            addSystem(
+                `Round ${data.round} description starts.`
+            );
+
+            updateMicUI();
+
+            syncRTCPlayers();
+
+            break;
+
 
         case "chat":
 
-            addChatMessage(
+            addChat(
                 data.sender,
                 data.text
             );
@@ -725,13 +482,9 @@ function handleServerMessage(data) {
             break;
 
 
-        // -------------------------------------------------
-        // REACTION
-        // -------------------------------------------------
-
         case "reaction":
 
-            addReactionMessage(
+            addChat(
                 data.sender,
                 data.emoji
             );
@@ -739,897 +492,347 @@ function handleServerMessage(data) {
             break;
 
 
-        // -------------------------------------------------
-        // GAME START
-        // -------------------------------------------------
-
-        case "game_start":
-
-            playSound("start");
-
-            isAlive = true;
-
-            activeTurnId = 0;
-
-            players =
-                Array.isArray(data.players)
-                    ? data.players.map(function(player) {
-
-                        if (typeof player === "string") {
-
-                            return {
-                                username: player,
-                                ready: true,
-                                alive: true
-                            };
-                        }
-
-                        return {
-                            username: player.username,
-                            ready: true,
-                            alive:
-                                player.alive !== false
-                        };
-
-                    })
-                    : [];
-
-            hideReadyButton();
-
-            show("secret-banner");
-
-            showSecret(
-                data.role,
-                data.word,
-                data.mode
-            );
-
-            setText(
-                "room-status",
-                "Match Started"
-            );
-
-            setAlert(
-                "Game Started! Check your secret word."
-            );
-
-            renderPlayers();
-
-            break;
-
-
-        // -------------------------------------------------
-        // TURN UPDATE
-        // -------------------------------------------------
-
-        case "turn_update":
-
-            currentSpeaker =
-                data.current_player || null;
-
-            activeTurnId =
-                Number(data.turn_id || 0);
-
-            setText(
-                "room-status",
-                `${currentSpeaker || "?"}'s turn`
-            );
-
-            if (
-                currentSpeaker === username &&
-                isAlive
-            ) {
-
-                playSound("turn");
-
-                setAlert(
-                    "🎙️ Your turn! Describe your word."
-                );
-
-                startTurnTimer(
-                    Number(data.seconds || 30)
-                );
-
-                setMicState(
-                    true
-                );
-
-            } else {
-
-                setAlert(
-                    `🎙️ ${currentSpeaker || "Player"} is speaking...`
-                );
-
-                stopTurnTimer();
-
-                setMicState(
-                    false
-                );
-            }
-
-            renderPlayers();
-
-            break;
-
-
-        // -------------------------------------------------
-        // TURN TIMEOUT
-        // -------------------------------------------------
-
-        case "turn_timeout":
-
-            playSound("timeout");
-
-            setAlert(
-                `${data.current_player || "Player"}'s time is up.`
-            );
-
-            break;
-
-
-        // -------------------------------------------------
-        // TURN ENDED
-        // -------------------------------------------------
-
-        case "turn_ended":
-
-            if (data.player === username) {
-
-                setAlert(
-                    "Your turn ended."
-                );
-
-            } else {
-
-                setAlert(
-                    `${data.player} passed the mic.`
-                );
-            }
-
-            break;
-
-
-        // -------------------------------------------------
-        // START VOTING
-        // -------------------------------------------------
-
-        case "start_voting":
-
-            currentSpeaker = null;
-
-            stopTurnTimer();
-
-            setMicState(
-                false
-            );
-
-            renderPlayers();
-
-            if (isAlive) {
-
-                openVoting(
-                    Array.isArray(data.players)
-                        ? data.players
-                        : []
-                );
-
-                setAlert(
-                    "Voting Phase"
-                );
-
-            } else {
-
-                setAlert(
-                    "Voting Phase • You are spectating."
-                );
-            }
-
-            break;
-
-
-        // -------------------------------------------------
-        // VOTE UPDATE
-        // -------------------------------------------------
-
-        case "vote_update":
-
-            setText(
-                "vote-status",
-                `Votes: ${data.count || 0}/${data.total || 0}`
-            );
-
-            break;
-
-
-        // -------------------------------------------------
-        // VOTE ERROR
-        // -------------------------------------------------
-
-        case "vote_error":
-
-            setText(
-                "vote-status",
-                data.message || "Vote error."
-            );
-
-            break;
-
-
-        // -------------------------------------------------
-        // VOTE TIE
-        // -------------------------------------------------
-
-        case "vote_tie":
-
-            playSound("timeout");
-
-            hide("vote-overlay");
-
-            setAlert(
-                data.message ||
-                "Vote tie! Vote again."
-            );
-
-            setTimeout(
-                function() {
-
-                    if (isAlive) {
-
-                        openVoting(
-                            Array.isArray(data.players)
-                                ? getAliveNames()
-                                : getAliveNames()
-                        );
-                    }
-
-                },
-                700
-            );
-
-            break;
-
-
-        // -------------------------------------------------
-        // VOTE RESET
-        // -------------------------------------------------
-
-        case "vote_reset":
-
-            setAlert(
-                data.message ||
-                "Voting again."
-            );
-
-            break;
-
-
-        // -------------------------------------------------
-        // REACTION PHASE
-        // -------------------------------------------------
-
-        case "reaction_phase":
-
-            playSound("lose");
-
-            stopTurnTimer();
-
-            setMicState(
-                false
-            );
-
-            hide("vote-overlay");
-
-            setAlert(
-                data.message ||
-                "Reaction phase."
-            );
-
-            markPlayerDead(
-                data.dead_player
-            );
-
-            if (
-                data.dead_player === username
-            ) {
-
-                isAlive = false;
-
-                setMicState(
-                    false
-                );
-
-                addSystemMessage(
-                    "You were eliminated. You can spectate."
-                );
-
-            } else if (isAlive) {
-
-                // Voice is kept disabled during reaction.
-                setMicState(false);
-            }
-
-            renderPlayers();
-
-            break;
-
-
-        // -------------------------------------------------
-        // NEW ROUND
-        // -------------------------------------------------
-
-        case "new_round":
-
-            playSound("start");
-
-            currentSpeaker = null;
-
-            stopTurnTimer();
-
-            setMicState(
-                false
-            );
-
-            setAlert(
-                "New round started."
-            );
-
-            break;
-
-
-        // -------------------------------------------------
-        // GAME OVER
-        // -------------------------------------------------
-
         case "game_over":
 
-            stopTurnTimer();
+            stopTimer();
 
-            setMicState(
-                false
-            );
+            currentSpeaker = null;
+
+            setMic(false);
 
             hide("vote-overlay");
+            hide("event-overlay");
 
-            showGameOver(
-                data.winner,
-                data.message,
-                data.spy_player
+            updateMicUI();
+
+            showGameOver(data);
+
+            break;
+
+
+        case "rtc_signal":
+
+            handleRTCSignal(data);
+
+            break;
+
+
+        case "error":
+
+            alert(
+                data.message ||
+                "Server error."
             );
 
             break;
-
-
-        // -------------------------------------------------
-        // PONG
-        // -------------------------------------------------
-
-        case "pong":
-
-            break;
     }
 }
 
 
-// =========================================================
-// STATUS
-// =========================================================
+/* -------------------------------------------------------
+   WORD
+------------------------------------------------------- */
 
-function getStatusText(data) {
+function setWordLine(category, word) {
 
-    if (data.state === "waiting") {
-
-        const count =
-            Array.isArray(data.players)
-                ? data.players.length
-                : 0;
-
-        const readyCount =
-            Array.isArray(data.players)
-                ? data.players.filter(
-                    p => p.ready
-                ).length
-                : 0;
-
-        return `Waiting • ${count}/${data.capacity} • Ready ${readyCount}/${data.capacity}`;
-    }
-
-    if (data.state === "playing") {
-        return "Game in progress";
-    }
-
-    if (data.state === "voting") {
-        return "Voting";
-    }
-
-    if (data.state === "reaction") {
-        return "Reaction phase";
-    }
-
-    if (data.state === "game_over") {
-        return "Game Over";
-    }
-
-    return "Waiting...";
+    $("word-line").innerHTML =
+        `<strong>Category: ${esc(category || "")}</strong><br>
+         <span>My word: ${esc(word || "—")}</span>`;
 }
 
 
-// =========================================================
-// PLAYER GRID
-// =========================================================
+/* -------------------------------------------------------
+   CATEGORY
+------------------------------------------------------- */
 
-function renderPlayers() {
+function buildCategories() {
 
-    const grid = $("players-grid");
-
-    if (!grid) {
-        return;
-    }
+    const grid =
+        $("category-grid");
 
     grid.innerHTML = "";
 
-    const totalSlots =
-        Math.max(
-            Number(userCapacity || 6),
-            players.length
+    categories.forEach(category => {
+
+        const button =
+            document.createElement("button");
+
+        button.textContent = category;
+
+        button.dataset.category =
+            category;
+
+        button.onclick =
+            () => selectCategory(category);
+
+        grid.appendChild(button);
+    });
+
+    $("category-confirm")
+        .classList
+        .add("disabled");
+}
+
+
+function selectCategory(category) {
+
+    selectedCategory = category;
+
+    [
+        ...$("category-grid").children
+    ].forEach(button => {
+
+        button.classList.toggle(
+            "selected",
+            button.dataset.category === category
         );
+    });
 
-    for (
-        let index = 0;
-        index < totalSlots;
-        index++
-    ) {
+    $("category-confirm")
+        .classList
+        .remove("disabled");
 
-        const player =
-            players[index];
-
-        if (!player) {
-
-            grid.appendChild(
-                createEmptyPlayerCard(
-                    index + 1
-                )
-            );
-
-            continue;
-        }
-
-        grid.appendChild(
-            createPlayerCard(
-                player,
-                index + 1
-            )
-        );
-    }
+    send({
+        action: "category_vote",
+        category
+    });
 }
 
 
-function createEmptyPlayerCard(number) {
+function confirmCategory() {
 
-    const wrapper =
-        document.createElement("div");
+    if (selectedCategory) {
 
-    wrapper.className =
-        "player-card empty-card";
-
-    wrapper.innerHTML = `
-        <div class="avatar-ring">
-            <div class="avatar-face">
-                <span class="empty-plus">+</span>
-            </div>
-            <div class="number-badge">
-                ${number}
-            </div>
-        </div>
-
-        <div class="player-name">
-            Empty
-        </div>
-    `;
-
-    return wrapper;
-}
-
-
-function createPlayerCard(player, number) {
-
-    const wrapper =
-        document.createElement("div");
-
-    wrapper.className =
-        "player-card";
-
-    const name =
-        String(player.username || "Player");
-
-    const initial =
-        name.charAt(0).toUpperCase();
-
-    const isMe =
-        name === username;
-
-    const alive =
-        player.alive !== false;
-
-    const ready =
-        player.ready === true;
-
-    const speaking =
-        name === currentSpeaker;
-
-    let ringClass = "";
-
-    if (!alive) {
-        ringClass = "dead";
-    } else if (speaking) {
-        ringClass = "speaking";
-    } else if (ready) {
-        ringClass = "ready";
-    }
-
-    let badge = "";
-
-    if (!alive) {
-
-        badge =
-            `<div class="dead-badge">💀</div>`;
-
-    } else if (speaking) {
-
-        badge =
-            `<div class="mic-badge">🎤</div>`;
-
-    } else if (
-        ready &&
-        !currentSpeaker
-    ) {
-
-        badge =
-            `<div class="ready-badge">✓</div>`;
-    }
-
-    wrapper.innerHTML = `
-        <div class="avatar-ring ${ringClass}">
-
-            <div class="number-badge">
-                ${number}
-            </div>
-
-            <div class="avatar-face">
-                ${escapeHTML(initial)}
-            </div>
-
-            ${badge}
-
-        </div>
-
-        <div class="player-name ${isMe ? "you-label" : ""}">
-            ${escapeHTML(
-                isMe ? "You" : name
-            )}
-        </div>
-    `;
-
-    return wrapper;
-}
-
-
-function markPlayerDead(deadPlayer) {
-
-    players =
-        players.map(function(player) {
-
-            if (
-                player.username === deadPlayer
-            ) {
-
-                return {
-                    ...player,
-                    alive: false,
-                    ready: false
-                };
-            }
-
-            return player;
+        send({
+            action: "category_vote",
+            category: selectedCategory
         });
+    }
+}
+
+
+function updateCategoryCounts(counts) {
+
+    [
+        ...$("category-grid").children
+    ].forEach(button => {
+
+        const category =
+            button.dataset.category;
+
+        const count =
+            counts[category] || 0;
+
+        button.textContent =
+            count
+                ? `${category} • ${count}`
+                : category;
+    });
+}
+
+
+/* -------------------------------------------------------
+   READY
+------------------------------------------------------- */
+
+function toggleReady() {
+
+    isReady = !isReady;
+
+    send({
+        action: "set_ready",
+        ready: isReady
+    });
+
+    $("ready-button").textContent =
+        isReady
+            ? "Ready ✓"
+            : "I'm Ready";
+}
+
+
+/* -------------------------------------------------------
+   PLAYERS
+------------------------------------------------------- */
+
+function renderPlayers() {
+
+    const grid =
+        $("players-grid");
+
+    if (!grid) return;
+
+    grid.innerHTML = "";
+
+    [
+        ...players
+    ]
+        .sort(
+            (a, b) =>
+                (a.number || 99) -
+                (b.number || 99)
+        )
+        .forEach(player => {
+
+            const element =
+                document.createElement("div");
+
+            element.className =
+                `player ${
+                    player.alive === false
+                        ? "dead"
+                        : ""
+                }`;
+
+            const initial =
+                esc(
+                    (player.username || "?")[0]
+                        .toUpperCase()
+                );
+
+            element.innerHTML = `
+                <div class="avatar ${
+                    currentSpeaker === player.username
+                        ? "speaking"
+                        : ""
+                }">
+
+                    <span class="num">
+                        ${player.number || ""}
+                    </span>
+
+                    ${initial}
+
+                    ${
+                        player.ready
+                            ? '<span class="ready-dot">✓</span>'
+                            : ""
+                    }
+
+                </div>
+
+                <div class="player-name">
+                    ${esc(player.username)}
+                </div>
+
+                ${
+                    currentSpeaker === player.username
+                        ? '<div class="speaking-text">Speaking</div>'
+                        : ""
+                }
+            `;
+
+            grid.appendChild(element);
+        });
+}
+
+
+function markDead(name) {
+
+    players = players.map(
+        player =>
+            player.username === name
+                ? {
+                    ...player,
+                    alive: false
+                }
+                : player
+    );
 
     renderPlayers();
 }
 
 
-function getAliveNames() {
+/* -------------------------------------------------------
+   TIMER
+------------------------------------------------------- */
 
-    return players
-        .filter(
-            player => player.alive !== false
-        )
-        .map(
-            player => player.username
-        );
-}
-
-
-// =========================================================
-// SECRET WORD
-// =========================================================
-
-function showSecret(
-    role,
-    word,
-    mode
+function startCountdown(
+    id,
+    seconds,
+    onEnd
 ) {
 
-    const value =
-        $("secret-value");
+    clearInterval(timerHandle);
 
-    const roleText =
-        $("secret-role");
+    const element = $(id);
 
-    if (role === "spy") {
+    if (!element) return;
 
-        if (mode === "wordless") {
+    timerEnd =
+        Date.now() +
+        Number(seconds) * 1000;
 
-            value.textContent =
-                "NO WORD";
+    const tick = () => {
 
-            roleText.textContent =
-                "🕵️ You are the SPY • Guess the word from descriptions.";
+        const left =
+            Math.max(
+                0,
+                Math.ceil(
+                    (timerEnd - Date.now()) / 1000
+                )
+            );
 
-        } else {
+        element.textContent = left;
 
-            value.textContent =
-                word || "SPY WORD";
+        if (left <= 0) {
 
-            roleText.textContent =
-                "🕵️ You are the SPY • You have a different word.";
+            clearInterval(timerHandle);
 
+            timerHandle = null;
+
+            if (onEnd) {
+                onEnd();
+            }
         }
+    };
 
-        value.style.color =
-            "#ff6a73";
+    tick();
 
-    } else {
-
-        value.textContent =
-            word || "WORD";
-
-        roleText.textContent =
-            "👨‍👩‍👧 You are a VILLAGER • Find the Spy.";
-
-        value.style.color =
-            "#ffe15b";
-    }
-}
-
-
-// =========================================================
-// TIMER
-// =========================================================
-
-function startTurnTimer(seconds) {
-
-    stopTurnTimer();
-
-    turnSeconds =
-        Math.max(
-            1,
-            Number(seconds || 30)
-        );
-
-    const timerWrap =
-        $("timer-wrap");
-
-    const progress =
-        $("timer-progress");
-
-    const text =
-        $("timer-text");
-
-    timerWrap.classList.add(
-        "show"
-    );
-
-    progress.classList.remove(
-        "warning",
-        "danger"
-    );
-
-    progress.style.width =
-        "100%";
-
-    updateTimerUI();
-
-    currentTimerInterval =
+    timerHandle =
         setInterval(
-            function() {
-
-                turnSeconds--;
-
-                updateTimerUI();
-
-                if (turnSeconds <= 10) {
-
-                    progress.classList.add(
-                        "warning"
-                    );
-
-                    progress.classList.remove(
-                        "danger"
-                    );
-                }
-
-                if (turnSeconds <= 5) {
-
-                    progress.classList.add(
-                        "danger"
-                    );
-
-                    progress.classList.remove(
-                        "warning"
-                    );
-
-                    if (turnSeconds > 0) {
-                        playSound("timeout");
-                    }
-                }
-
-                if (turnSeconds <= 0) {
-
-                    clearInterval(
-                        currentTimerInterval
-                    );
-
-                    currentTimerInterval =
-                        null;
-                }
-
-            },
-            1000
+            tick,
+            200
         );
 }
 
 
-function updateTimerUI() {
+function stopTimer() {
 
-    const text =
-        $("timer-text");
-
-    const progress =
-        $("timer-progress");
-
-    if (!text || !progress) {
-        return;
-    }
-
-    text.textContent =
-        `YOUR TURN: ${Math.max(0, turnSeconds)}s`;
-
-    const percent =
-        Math.max(
-            0,
-            Math.min(
-                100,
-                (turnSeconds / 30) * 100
-            )
-        );
-
-    progress.style.width =
-        `${percent}%`;
-}
-
-
-function stopTurnTimer() {
-
-    if (currentTimerInterval) {
-
-        clearInterval(
-            currentTimerInterval
-        );
-
-        currentTimerInterval =
-            null;
-    }
-
-    if (currentTimerTimeout) {
-
-        clearTimeout(
-            currentTimerTimeout
-        );
-
-        currentTimerTimeout =
-            null;
-    }
-
-    const timerWrap =
-        $("timer-wrap");
-
-    if (timerWrap) {
-
-        timerWrap.classList.remove(
-            "show"
-        );
-    }
-}
-
-
-// =========================================================
-// TURN
-// =========================================================
-
-function endMyTurn() {
-
-    playSound("click");
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-    }
-
-    if (!isAlive) {
-        return;
-    }
-
-    if (currentSpeaker !== username) {
-        return;
-    }
-
-    sendWS({
-        action: "end_turn"
-    });
-
-    stopTurnTimer();
-
-    setMicState(
-        false
+    clearInterval(
+        timerHandle
     );
+
+    timerHandle = null;
+
+    $("timer").textContent = "--";
 }
 
 
-// =========================================================
-// VOTING
-// =========================================================
+/* -------------------------------------------------------
+   VOTING
+------------------------------------------------------- */
 
-function openVoting(playerNames) {
-
-    const overlay =
-        $("vote-overlay");
+function openVoting(names) {
 
     const grid =
         $("vote-grid");
 
-    if (!overlay || !grid) {
+    grid.innerHTML = "";
+
+    if (!isAlive) {
+
+        $("vote-status").textContent =
+            "You are eliminated. You are spectating.";
+
+        show("vote-overlay");
+
         return;
     }
 
-    grid.innerHTML = "";
-
-    const candidates =
-        Array.from(
-            new Set(
-                playerNames
-                    .filter(
-                        name =>
-                            name &&
-                            name !== username
-                    )
-            )
-        );
-
-    if (!candidates.length) {
-
-        setText(
-            "vote-status",
-            "No available targets."
-        );
-
-    } else {
-
-        setText(
-            "vote-status",
-            "Choose the player you suspect."
-        );
-    }
-
-    candidates.forEach(
-        function(playerName, index) {
+    names
+        .filter(name => name !== username)
+        .forEach(name => {
 
             const button =
                 document.createElement("button");
@@ -1637,598 +840,860 @@ function openVoting(playerNames) {
             button.className =
                 "vote-btn";
 
-            button.type =
-                "button";
-
             button.textContent =
-                `${index + 1}. ${playerName}`;
+                `No.${getNumber(name)}  ${name}`;
 
-            button.addEventListener(
-                "click",
-                function() {
+            button.onclick =
+                () => castVote(name);
 
-                    castVote(
-                        playerName
-                    );
-                }
-            );
+            grid.appendChild(button);
+        });
 
-            grid.appendChild(
-                button
-            );
-        }
-    );
+    $("vote-status").textContent =
+        "Choose the player you suspect.";
 
     show("vote-overlay");
 }
 
 
-function castVote(player) {
+function getNumber(name) {
 
-    playSound("click");
-
-    if (!isAlive) {
-        return;
-    }
-
-    if (!player) {
-        return;
-    }
-
-    const success =
-        sendWS({
-            action: "cast_vote",
-            vote: player
-        });
-
-    if (!success) {
-        return;
-    }
-
-    const grid =
-        $("vote-grid");
-
-    if (grid) {
-
-        grid.innerHTML = "";
-
-        const waiting =
-            document.createElement("div");
-
-        waiting.style.gridColumn =
-            "1 / -1";
-
-        waiting.style.textAlign =
-            "center";
-
-        waiting.style.fontWeight =
-            "900";
-
-        waiting.style.padding =
-            "15px";
-
-        waiting.textContent =
-            `🎯 Target Locked: ${player}`;
-
-        grid.appendChild(
-            waiting
-        );
-    }
-
-    setText(
-        "vote-status",
-        "Waiting for other players..."
+    return (
+        players.find(
+            player =>
+                player.username === name
+        )?.number || ""
     );
 }
 
 
-// =========================================================
-// CHAT
-// =========================================================
+function castVote(name) {
 
-function sendChat() {
+    if (!isAlive) return;
 
-    playSound("click");
-
-    const input =
-        $("chat-input");
-
-    if (!input) {
-        return;
-    }
-
-    const text =
-        input.value.trim();
-
-    if (!text) {
-        return;
-    }
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-
-        alert("Not connected to the room.");
-
-        return;
-    }
-
-    sendWS({
-        action: "chat",
-        text: text
+    send({
+        action: "cast_vote",
+        vote: name
     });
 
-    input.value = "";
+    $("vote-grid").innerHTML =
+        `<div style="
+            grid-column:1/-1;
+            font-weight:700;
+            padding:18px;
+            text-align:center
+        ">
+            🎯 Target locked: ${esc(name)}
+        </div>`;
+
+    $("vote-status").textContent =
+        "Waiting for other players...";
 }
 
 
-function addChatMessage(
-    sender,
-    text
-) {
+/* -------------------------------------------------------
+   EVENTS / GAME OVER
+------------------------------------------------------- */
 
-    const container =
-        $("messages");
+function showEvent(title, text) {
 
-    if (!container) {
-        return;
-    }
+    $("event-title").textContent =
+        title;
 
-    const message =
-        document.createElement("div");
+    $("event-text").textContent =
+        text;
 
-    message.className =
-        sender === "System"
-            ? "message system"
-            : "message";
-
-    if (sender === "System") {
-
-        message.textContent =
-            text || "";
-
-    } else {
-
-        message.innerHTML =
-            `<span class="sender">${
-                escapeHTML(sender)
-            }:</span> ${
-                escapeHTML(text)
-            }`;
-    }
-
-    container.appendChild(
-        message
-    );
-
-    trimMessages();
-
-    container.scrollTop =
-        container.scrollHeight;
+    show("event-overlay");
 }
 
 
-function addSystemMessage(text) {
+function closeEvent() {
 
-    addChatMessage(
+    hide("event-overlay");
+}
+
+
+function showGameOver(data) {
+
+    $("gameover-title").textContent =
+        data.winner === "civilians"
+            ? "CIVILIANS WIN! 🎉"
+            : "SPY WINS! 🕵️";
+
+    $("gameover-message").textContent =
+        data.message || "Game over.";
+
+    $("spy-reveal").textContent =
+        data.spy_player
+            ? `The Spy was: ${data.spy_player} • Villagers' word: ${data.word || "—"} • Spy word: ${data.spy_word || "—"}`
+            : "Spy revealed.";
+
+    show("gameover-overlay");
+}
+
+
+/* -------------------------------------------------------
+   CHAT
+------------------------------------------------------- */
+
+function addSystem(text) {
+
+    addChat(
         "System",
         text
     );
 }
 
 
-function addReactionMessage(
-    sender,
-    emoji
-) {
+function addChat(sender, text) {
 
-    const container =
+    const box =
         $("messages");
 
-    if (!container) {
-        return;
-    }
+    if (!box) return;
 
     const message =
         document.createElement("div");
 
     message.className =
-        "message reaction";
+        "message";
 
     message.innerHTML =
-        `<strong>${escapeHTML(sender)}</strong> ${escapeHTML(emoji)}`;
+        sender === "System"
+            ? `<span class="sender">🔔 System:</span> ${esc(text)}`
+            : `<span class="sender">${esc(sender)}:</span> ${esc(text)}`;
 
-    container.appendChild(
-        message
-    );
+    box.appendChild(message);
 
-    trimMessages();
+    while (box.children.length > 100) {
+        box.firstChild.remove();
+    }
 
-    container.scrollTop =
-        container.scrollHeight;
+    box.scrollTop =
+        box.scrollHeight;
 }
 
 
-function trimMessages() {
+function sendChat() {
 
-    const container =
-        $("messages");
+    const input =
+        $("chat-input");
 
-    if (!container) {
-        return;
-    }
+    const text =
+        input.value.trim();
 
-    while (
-        container.children.length > 100
-    ) {
+    if (!text) return;
 
-        container.removeChild(
-            container.firstElementChild
-        );
-    }
+    send({
+        action: "chat",
+        text
+    });
+
+    input.value = "";
 }
 
 
-// =========================================================
-// REACTIONS
-// =========================================================
+/* -------------------------------------------------------
+   UI
+------------------------------------------------------- */
 
 function toggleReactions() {
 
-    playSound("click");
-
-    const panel =
-        $("reaction-panel");
-
-    panel.classList.toggle(
-        "hidden"
-    );
+    $("reaction-panel")
+        .classList
+        .toggle("hidden");
 }
 
 
 function sendReaction(emoji) {
 
-    playSound("click");
-
     hide("reaction-panel");
 
-    sendWS({
+    send({
         action: "reaction",
-        emoji: emoji
+        emoji
     });
 }
 
 
-// =========================================================
-// MIC / AGORA
-// =========================================================
+function focusChat() {
 
-async function initAgora(channelName) {
-
-    if (
-        typeof AgoraRTC === "undefined"
-    ) {
-
-        throw new Error(
-            "Agora SDK is not loaded."
-        );
-    }
-
-    rtcClient =
-        AgoraRTC.createClient({
-            mode: "rtc",
-            codec: "vp8"
-        });
-
-    rtcClient.on(
-        "user-published",
-        async function(
-            user,
-            mediaType
-        ) {
-
-            try {
-
-                await rtcClient.subscribe(
-                    user,
-                    mediaType
-                );
-
-                if (
-                    mediaType === "audio" &&
-                    user.audioTrack
-                ) {
-
-                    user.audioTrack.play();
-                }
-
-            } catch (error) {
-
-                console.error(
-                    "Agora subscribe error:",
-                    error
-                );
-            }
-        }
-    );
-
-
-    rtcClient.on(
-        "user-unpublished",
-        function(user, mediaType) {
-
-            console.log(
-                "Agora user unpublished:",
-                user.uid,
-                mediaType
-            );
-        }
-    );
-
-
-    rtcClient.on(
-        "user-left",
-        function(user) {
-
-            console.log(
-                "Agora user left:",
-                user.uid
-            );
-        }
-    );
-
-
-    // Use a unique browser-session UID.
-    const agoraUid =
-        (
-            "spy_" +
-            myClientId +
-            "_" +
-            Math.random()
-                .toString(36)
-                .substring(2, 8)
-        ).substring(0, 64);
-
-    /*
-     * The current project uses an Agora App ID without a token.
-     * This works only when the Agora project is configured for
-     * App ID authentication. If the project requires tokens,
-     * a backend token endpoint must be added.
-     */
-
-    await rtcClient.join(
-        AGORA_APP_ID,
-        String(channelName),
-        null,
-        agoraUid
-    );
-
-    agoraJoined = true;
-
-    // IMPORTANT:
-    // Do not create microphone track here.
-    // It will be created only on the player's turn.
-    updateMicUI(false);
+    $("chat-input").focus();
 }
 
 
-// ---------------------------------------------------------
-// START LOCAL MIC
-// ---------------------------------------------------------
+function toggleSound() {
 
-async function startLocalMicrophone() {
+    soundOn = !soundOn;
 
-    if (micBusy) {
-        return;
-    }
+    addSystem(
+        soundOn
+            ? "Sound enabled."
+            : "Sound muted."
+    );
 
-    if (!rtcClient || !agoraJoined) {
+    hide("menu-overlay");
+}
 
-        return;
-    }
 
-    micBusy = true;
+function toggleMenu() {
+
+    show("menu-overlay");
+}
+
+
+function openRules() {
+
+    hide("menu-overlay");
+
+    show("rules-overlay");
+}
+
+
+function showPlayersCount() {
+
+    addSystem(
+        `Players alive: ${
+            players.filter(
+                p => p.alive !== false
+            ).length
+        }/${capacity}`
+    );
+}
+
+
+function leaveGame() {
 
     try {
+        closeRTC();
+    } catch {}
 
-        if (!localAudioTrack) {
+    if (ws) {
+        ws.close();
+    }
 
-            localAudioTrack =
-                await AgoraRTC.createMicrophoneAudioTrack(
-                    {
-                        encoderConfig: "speech_low_quality"
-                    }
-                );
+    location.reload();
+}
 
-            await rtcClient.publish(
-                [localAudioTrack]
+
+/* =======================================================
+   WEBRTC VOICE
+======================================================= */
+
+const rtcConfig = {
+
+    iceServers: [
+
+        {
+            urls:
+                "stun:stun.l.google.com:19302"
+        },
+
+        {
+            urls:
+                "stun:stun1.l.google.com:19302"
+        }
+    ]
+};
+
+
+async function startRTC() {
+
+    if (rtcStarted || !ws) {
+        return;
+    }
+
+    rtcStarted = true;
+
+    syncRTCPlayers();
+}
+
+
+function syncRTCPlayers() {
+
+    if (!rtcStarted) {
+        return;
+    }
+
+    for (const player of players) {
+
+        if (
+            player.username !== username &&
+            !peerConnections.has(player.username)
+        ) {
+
+            createPeer(
+                player.username,
+                shouldInitiate(player.username)
+            );
+        }
+    }
+
+    for (
+        const name of [
+            ...peerConnections.keys()
+        ]
+    ) {
+
+        const exists =
+            players.some(
+                player =>
+                    player.username === name &&
+                    player.alive !== false
+            );
+
+        if (!exists) {
+            closePeer(name);
+        }
+    }
+}
+
+
+/*
+    Lower player number creates the offer.
+    This avoids WebRTC "offer collision".
+*/
+
+function shouldInitiate(remoteName) {
+
+    const myNumber =
+        players.find(
+            p => p.username === username
+        )?.number || 999;
+
+    const remoteNumber =
+        players.find(
+            p => p.username === remoteName
+        )?.number || 999;
+
+    return myNumber < remoteNumber;
+}
+
+
+function createPeer(
+    remoteName,
+    initiator
+) {
+
+    if (
+        !remoteName ||
+        remoteName === username
+    ) {
+        return null;
+    }
+
+    if (
+        peerConnections.has(remoteName)
+    ) {
+        return peerConnections.get(
+            remoteName
+        );
+    }
+
+    const pc =
+        new RTCPeerConnection(
+            rtcConfig
+        );
+
+    peerConnections.set(
+        remoteName,
+        pc
+    );
+
+    pendingIce.set(
+        remoteName,
+        []
+    );
+
+
+    /*
+        Receive audio even before
+        our microphone is enabled.
+    */
+
+    if (localStream) {
+
+        for (
+            const track
+            of localStream.getTracks()
+        ) {
+
+            pc.addTrack(
+                track,
+                localStream
             );
         }
 
-        await localAudioTrack.setMuted(
-            false
+    } else {
+
+        pc.addTransceiver(
+            "audio",
+            {
+                direction: "recvonly"
+            }
+        );
+    }
+
+
+    pc.onicecandidate = event => {
+
+        if (event.candidate) {
+
+            send({
+                action: "rtc_ice",
+                target: remoteName,
+                signal: event.candidate
+            });
+        }
+    };
+
+
+    pc.ontrack = event => {
+
+        const audio =
+            document.createElement("audio");
+
+        audio.autoplay = true;
+        audio.playsInline = true;
+
+        audio.srcObject =
+            event.streams[0];
+
+        audio.dataset.peer =
+            remoteName;
+
+        document.body.appendChild(
+            audio
         );
 
-        updateMicUI(true);
+        audio
+            .play()
+            .catch(() => {});
+
+        pc._audio = audio;
+    };
+
+
+    pc.onconnectionstatechange = () => {
+
+        if (
+            [
+                "failed",
+                "closed"
+            ].includes(
+                pc.connectionState
+            )
+        ) {
+
+            closePeer(remoteName);
+
+            setTimeout(
+                () => {
+
+                    if (
+                        players.some(
+                            p =>
+                                p.username === remoteName &&
+                                p.alive !== false
+                        )
+                    ) {
+
+                        createPeer(
+                            remoteName,
+                            shouldInitiate(remoteName)
+                        );
+                    }
+                },
+                1500
+            );
+        }
+    };
+
+
+    if (initiator) {
+        makeOffer(
+            remoteName,
+            pc
+        );
+    }
+
+    return pc;
+}
+
+
+async function makeOffer(
+    name,
+    pc
+) {
+
+    try {
+
+        const offer =
+            await pc.createOffer();
+
+        await pc.setLocalDescription(
+            offer
+        );
+
+        send({
+            action: "rtc_offer",
+            target: name,
+            signal: pc.localDescription
+        });
 
     } catch (error) {
 
-        console.error(
+        console.warn(
+            "WebRTC offer error:",
+            error
+        );
+    }
+}
+
+
+async function handleRTCSignal(data) {
+
+    const from = data.from;
+
+    if (
+        !from ||
+        from === username
+    ) {
+        return;
+    }
+
+    let pc =
+        peerConnections.get(from);
+
+    if (!pc) {
+
+        pc = createPeer(
+            from,
+            data.signal_type === "rtc_offer"
+        );
+    }
+
+    if (!pc) {
+        return;
+    }
+
+    try {
+
+        if (
+            data.signal_type === "rtc_offer"
+        ) {
+
+            await pc.setRemoteDescription(
+                new RTCSessionDescription(
+                    data.signal
+                )
+            );
+
+            const answer =
+                await pc.createAnswer();
+
+            await pc.setLocalDescription(
+                answer
+            );
+
+            send({
+                action: "rtc_answer",
+                target: from,
+                signal: pc.localDescription
+            });
+
+        }
+
+        else if (
+            data.signal_type === "rtc_answer"
+        ) {
+
+            await pc.setRemoteDescription(
+                new RTCSessionDescription(
+                    data.signal
+                )
+            );
+        }
+
+        else if (
+            data.signal_type === "rtc_ice"
+        ) {
+
+            if (pc.remoteDescription) {
+
+                await pc.addIceCandidate(
+                    new RTCIceCandidate(
+                        data.signal
+                    )
+                );
+
+            } else {
+
+                pendingIce
+                    .get(from)
+                    .push(data.signal);
+            }
+        }
+
+
+        if (
+            pc.remoteDescription &&
+            pendingIce.get(from)?.length
+        ) {
+
+            for (
+                const candidate
+                of pendingIce.get(from)
+            ) {
+
+                await pc.addIceCandidate(
+                    new RTCIceCandidate(
+                        candidate
+                    )
+                );
+            }
+
+            pendingIce.set(
+                from,
+                []
+            );
+        }
+
+    } catch (error) {
+
+        console.warn(
+            "WebRTC signaling error:",
+            error
+        );
+    }
+}
+
+
+function closePeer(name) {
+
+    const pc =
+        peerConnections.get(name);
+
+    if (pc) {
+
+        try {
+            pc.close();
+        } catch {}
+
+        if (pc._audio) {
+            pc._audio.remove();
+        }
+    }
+
+    peerConnections.delete(name);
+    pendingIce.delete(name);
+}
+
+
+function closeRTC() {
+
+    for (
+        const name
+        of [...peerConnections.keys()]
+    ) {
+
+        closePeer(name);
+    }
+
+    if (localStream) {
+
+        localStream
+            .getTracks()
+            .forEach(
+                track => track.stop()
+            );
+
+        localStream = null;
+    }
+
+    rtcStarted = false;
+    micOn = false;
+
+    updateMicUI();
+}
+
+
+/* -------------------------------------------------------
+   MICROPHONE
+------------------------------------------------------- */
+
+async function requestMic() {
+
+    if (localStream) {
+        return true;
+    }
+
+    if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+    ) {
+
+        addSystem(
+            "This browser does not support microphone access."
+        );
+
+        return false;
+    }
+
+    try {
+
+        localStream =
+            await navigator.mediaDevices.getUserMedia(
+                {
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    },
+                    video: false
+                }
+            );
+
+        micPermission = true;
+
+
+        /*
+            Add microphone track to
+            every existing peer connection.
+        */
+
+        for (
+            const [name, pc]
+            of peerConnections
+        ) {
+
+            for (
+                const track
+                of localStream.getTracks()
+            ) {
+
+                pc.addTrack(
+                    track,
+                    localStream
+                );
+            }
+        }
+
+
+        addSystem(
+            "Microphone enabled."
+        );
+
+        return true;
+
+    } catch (error) {
+
+        console.warn(
             "Microphone error:",
             error
         );
 
-        updateMicUI(false);
+        addSystem(
+            "Microphone permission was denied or unavailable. Please allow microphone access in browser settings."
+        );
 
-        let message =
-            "Microphone could not start.";
+        return false;
+    }
+}
 
-        if (
-            error &&
-            error.message
-        ) {
 
-            message =
-                `Microphone error: ${error.message}`;
+async function setMic(on) {
+
+    /*
+        Only current speaker can transmit.
+    */
+
+    if (
+        !isAlive ||
+        currentSpeaker !== username
+    ) {
+
+        on = false;
+    }
+
+
+    if (
+        on &&
+        !localStream
+    ) {
+
+        const allowed =
+            await requestMic();
+
+        if (!allowed) {
+
+            updateMicUI();
+
+            return;
         }
-
-        addSystemMessage(
-            message
-        );
-
-        alert(
-            "Microphone could not start. " +
-            "Please allow microphone permission for this site, " +
-            "then try again."
-        );
-
-    } finally {
-
-        micBusy = false;
-    }
-}
-
-
-// ---------------------------------------------------------
-// STOP LOCAL MIC
-// ---------------------------------------------------------
-
-async function stopLocalMicrophone() {
-
-    if (!localAudioTrack) {
-
-        updateMicUI(false);
-
-        return;
     }
 
-    try {
 
-        await localAudioTrack.setMuted(
-            true
-        );
+    if (localStream) {
 
-    } catch (_) {}
+        localStream
+            .getAudioTracks()
+            .forEach(
+                track => {
+                    track.enabled = !!on;
+                }
+            );
+    }
 
-    updateMicUI(false);
+
+    micOn = !!on;
+
+    updateMicUI();
 }
 
-
-// ---------------------------------------------------------
-// PUBLIC MIC TOGGLE
-// ---------------------------------------------------------
 
 async function toggleMic() {
 
-    playSound("click");
-
     if (!isAlive) {
 
-        alert(
-            "You are eliminated and can only spectate."
+        addSystem(
+            "You are eliminated and cannot use the game microphone."
         );
 
         return;
     }
 
-    if (currentSpeaker !== username) {
 
-        alert(
-            "Microphone is available only during your turn."
-        );
-
-        return;
-    }
-
-    if (!localAudioTrack) {
-
-        await startLocalMicrophone();
-
-        return;
-    }
-
-    try {
-
-        const currentlyMuted =
-            localAudioTrack.isMuted;
-
-        await localAudioTrack.setMuted(
-            !currentlyMuted
-        );
-
-        updateMicUI(
-            currentlyMuted
-        );
-
-    } catch (error) {
-
-        console.error(
-            error
-        );
-
-        updateMicUI(false);
-    }
-}
-
-
-// ---------------------------------------------------------
-// MIC STATE
-// ---------------------------------------------------------
-
-async function setMicState(
-    shouldBeOn
-) {
-
-    if (!shouldBeOn) {
-
-        await stopLocalMicrophone();
-
-        return;
-    }
-
-    if (!isAlive) {
-
-        await stopLocalMicrophone();
-
-        return;
-    }
+    /*
+        If it isn't our turn, the first tap
+        simply asks for microphone permission.
+    */
 
     if (
         currentSpeaker !== username
     ) {
 
-        await stopLocalMicrophone();
+        const allowed =
+            await requestMic();
+
+        if (allowed) {
+
+            addSystem(
+                "Mic permission is ready. It will activate automatically on your turn."
+            );
+        }
 
         return;
     }
 
-    if (!localAudioTrack) {
 
-        await startLocalMicrophone();
-
-        return;
-    }
-
-    try {
-
-        await localAudioTrack.setMuted(
-            false
-        );
-
-        updateMicUI(true);
-
-    } catch (_) {
-
-        updateMicUI(false);
-    }
+    await setMic(
+        !micOn
+    );
 }
 
 
-// ---------------------------------------------------------
-// MIC UI
-// ---------------------------------------------------------
-
-function updateMicUI(
-    isOn
-) {
+function updateMicUI() {
 
     const button =
         $("mic-button");
@@ -2237,559 +1702,74 @@ function updateMicUI(
         return;
     }
 
-    if (isOn) {
-
-        button.classList.add(
-            "active"
-        );
-
-        button.classList.remove(
-            "off"
-        );
-
-        button.textContent =
-            "🎙️";
-
-    } else {
-
-        button.classList.remove(
-            "active"
-        );
-
-        button.classList.add(
-            "off"
-        );
-
-        button.textContent =
-            "🎤";
-    }
-}
-
-
-// =========================================================
-// MENU
-// =========================================================
-
-function toggleMenu() {
-
-    playSound("click");
-
-    const menu =
-        $("menu-card");
-
-    if (!menu) {
-        return;
-    }
-
-    menu.classList.toggle(
-        "hidden"
-    );
-}
-
-
-function toggleVolume() {
-
-    playSound("click");
-
-    soundEnabled =
-        !soundEnabled;
-
-    addSystemMessage(
-        soundEnabled
-            ? "Game sounds enabled."
-            : "Game sounds muted."
+    button.classList.toggle(
+        "active",
+        micOn
     );
 
-    hide("menu-card");
+    button.textContent =
+        micOn
+            ? "🎙️"
+            : "🎤";
+
+    button.title =
+        (
+            isAlive &&
+            currentSpeaker === username
+        )
+            ? "Tap to mute/unmute"
+            : "Tap once to allow microphone access";
 }
 
 
-function spectateMode() {
-
-    hide("menu-card");
-
-    if (isAlive) {
-
-        addSystemMessage(
-            "You are currently playing. Spectate mode becomes relevant after elimination."
-        );
-
-    } else {
-
-        addSystemMessage(
-            "Spectate mode enabled."
-        );
-    }
-}
-
-
-// =========================================================
-// RULES
-// =========================================================
-
-function openRules() {
-
-    hide("menu-card");
-
-    const mode =
-        selectedGameMode;
-
-    const content =
-        $("rules-content");
-
-    if (!content) {
-        return;
-    }
-
-    if (mode === "wordless") {
-
-        content.innerHTML = `
-            <h3>Wordless Spy</h3>
-
-            <p>
-                All villagers receive the same secret word.
-                The Spy receives no word.
-            </p>
-
-            <h3>Villager</h3>
-
-            <p>
-                Listen to the descriptions and find the
-                player who does not seem to know the word.
-            </p>
-
-            <h3>Spy</h3>
-
-            <p>
-                The Spy has no word. Listen carefully,
-                hide your identity and try to guess the
-                secret word.
-            </p>
-
-            <h3>Turns</h3>
-
-            <p>
-                Each alive player gets one speaking turn.
-                The turn lasts 30 seconds.
-            </p>
-
-            <h3>Voting</h3>
-
-            <p>
-                After everyone speaks, alive players vote.
-                The player with the highest votes is eliminated.
-            </p>
-
-            <h3>Win</h3>
-
-            <p>
-                Villagers win when the Spy is eliminated.
-                The Spy wins when only two players remain.
-            </p>
-        `;
-
-    } else {
-
-        content.innerHTML = `
-            <h3>Who's the Spy</h3>
-
-            <p>
-                All villagers get the same word.
-                The Spy receives a different but related word.
-            </p>
-
-            <h3>Villager</h3>
-
-            <p>
-                Describe your word without saying the actual
-                word and work together to identify the Spy.
-            </p>
-
-            <h3>Spy</h3>
-
-            <p>
-                The Spy gets a different word. Give descriptions
-                that fit your word while trying to avoid suspicion.
-            </p>
-
-            <h3>Turns</h3>
-
-            <p>
-                Each alive player gets one speaking turn.
-                Every turn has a 30 second limit.
-            </p>
-
-            <h3>Voting</h3>
-
-            <p>
-                After the speaking round, everyone votes.
-                If there is a tie, the vote starts again.
-            </p>
-
-            <h3>Win</h3>
-
-            <p>
-                Villagers win by eliminating the Spy.
-                The Spy wins when only two players remain.
-            </p>
-        `;
-    }
-
-    show("rules-overlay");
-}
-
-
-function closeRules() {
-
-    playSound("click");
-
-    hide("rules-overlay");
-}
-
-
-// =========================================================
-// GAME OVER
-// =========================================================
-
-function showGameOver(
-    winner,
-    message,
-    spyPlayer
-) {
-
-    const winnerEl =
-        $("winner-text");
-
-    const messageEl =
-        $("game-over-message");
-
-    const revealEl =
-        $("spy-reveal");
-
-    if (
-        winner === "civilians"
-    ) {
-
-        playSound("win");
-
-        winnerEl.textContent =
-            "CIVILIANS WIN! 🎉";
-
-        winnerEl.classList.add(
-            "civilians"
-        );
-
-        winnerEl.classList.remove(
-            "spy"
-        );
-
-    } else {
-
-        playSound("lose");
-
-        winnerEl.textContent =
-            "SPY WINS! 🕵️";
-
-        winnerEl.classList.add(
-            "spy"
-        );
-
-        winnerEl.classList.remove(
-            "civilians"
-        );
-    }
-
-    messageEl.textContent =
-        message ||
-        "The game has ended.";
-
-    if (spyPlayer) {
-
-        revealEl.textContent =
-            `The Spy was: ${spyPlayer}`;
-
-    } else {
-
-        revealEl.textContent =
-            "Spy revealed.";
-    }
-
-    show(
-        "game-over-overlay"
+/* -------------------------------------------------------
+   EVENTS
+------------------------------------------------------- */
+
+$("chat-input")
+    .addEventListener(
+        "keydown",
+        event => {
+
+            if (event.key === "Enter") {
+                sendChat();
+            }
+        }
     );
-}
 
-
-// =========================================================
-// FOCUS CHAT
-// =========================================================
-
-function focusChat() {
-
-    playSound("click");
-
-    const input =
-        $("chat-input");
-
-    if (!input) {
-        return;
-    }
-
-    input.focus();
-
-    input.scrollIntoView({
-        block: "center",
-        behavior: "smooth"
-    });
-}
-
-
-// =========================================================
-// COPY ROOM CODE
-// =========================================================
-
-async function copyRoomCode() {
-
-    playSound("click");
-
-    if (!room) {
-        return;
-    }
-
-    try {
-
-        await navigator.clipboard.writeText(
-            room
-        );
-
-        setAlert(
-            `Room code ${room} copied!`
-        );
-
-    } catch (_) {
-
-        // Fallback for browsers blocking clipboard API.
-        try {
-
-            const input =
-                document.createElement("input");
-
-            input.value =
-                room;
-
-            document.body.appendChild(
-                input
-            );
-
-            input.select();
-
-            document.execCommand(
-                "copy"
-            );
-
-            input.remove();
-
-            setAlert(
-                `Room code ${room} copied!`
-            );
-
-        } catch (error) {
-
-            prompt(
-                "Copy this room code:",
-                room
-            );
-        }
-    }
-}
-
-
-// =========================================================
-// ALERT
-// =========================================================
-
-function setAlert(text) {
-
-    const element =
-        $("alert-bar");
-
-    if (!element) {
-        return;
-    }
-
-    element.textContent =
-        text || "";
-}
-
-
-// =========================================================
-// CLOSE ALL OVERLAYS
-// =========================================================
-
-function closeAllOverlays() {
-
-    hide("vote-overlay");
-    hide("rules-overlay");
-    hide("game-over-overlay");
-    hide("reaction-panel");
-    hide("menu-card");
-}
-
-
-// =========================================================
-// CLEANUP AGORA
-// =========================================================
-
-async function cleanupAgora() {
-
-    try {
-
-        if (localAudioTrack) {
-
-            try {
-                localAudioTrack.stop();
-            } catch (_) {}
-
-            try {
-                localAudioTrack.close();
-            } catch (_) {}
-
-            localAudioTrack =
-                null;
-        }
-
-        if (
-            rtcClient &&
-            agoraJoined
-        ) {
-
-            await rtcClient.leave();
-        }
-
-    } catch (error) {
-
-        console.error(
-            "Agora cleanup error:",
-            error
-        );
-
-    } finally {
-
-        rtcClient = null;
-        agoraJoined = false;
-
-        updateMicUI(false);
-    }
-}
-
-
-// =========================================================
-// LEAVE GAME
-// =========================================================
-
-async function leaveGame() {
-
-    playSound("click");
-
-    if (
-        ws &&
-        ws.readyState === WebSocket.OPEN
-    ) {
-
-        try {
-            ws.close();
-        } catch (_) {}
-    }
-
-    await cleanupAgora();
-
-    stopTurnTimer();
-
-    window.location.href =
-        window.location.pathname;
-}
-
-
-// =========================================================
-// PAGE CLOSE
-// =========================================================
 
 window.addEventListener(
     "beforeunload",
-    function() {
-
-        try {
-
-            if (
-                ws &&
-                ws.readyState === WebSocket.OPEN
-            ) {
-
-                ws.close();
-            }
-
-        } catch (_) {}
-
-        try {
-
-            if (localAudioTrack) {
-                localAudioTrack.stop();
-                localAudioTrack.close();
-            }
-
-        } catch (_) {}
-    }
+    closeRTC
 );
 
 
-// =========================================================
-// AUTO HIDE REACTION PANEL
-// =========================================================
+window.addEventListener(
+    "load",
+    () => {
 
-document.addEventListener(
-    "click",
-    function(event) {
+        $("room-input")
+            .addEventListener(
+                "input",
+                event => {
 
-        const panel =
-            $("reaction-panel");
-
-        if (!panel) {
-            return;
-        }
-
-        if (
-            panel.classList.contains("hidden")
-        ) {
-            return;
-        }
-
-        const clickedInside =
-            panel.contains(event.target);
-
-        const controls =
-            event.target.closest(
-                ".bottom-control"
+                    event.target.value =
+                        event.target.value
+                            .replace(/\D/g, "")
+                            .slice(0, 4);
+                }
             );
 
-        if (
-            !clickedInside &&
-            !controls
-        ) {
 
-            hide(
-                "reaction-panel"
+        $("name-input")
+            .addEventListener(
+                "keydown",
+                event => {
+
+                    if (event.key === "Enter") {
+                        joinRoom();
+                    }
+                }
             );
-        }
     }
 );
-
-
-// =========================================================
-// INITIAL UI
-// =========================================================
-
-selectGameMode(
-    "spy"
-);
-
-resetReadyButton();
