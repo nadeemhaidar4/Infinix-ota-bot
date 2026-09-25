@@ -3,143 +3,141 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Spy Word Game - Suspense Mode</title>
+    <title>Spy Word Game</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <!-- Simple, Clean, Readable Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Poppins:wght@500;700;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --spy-red: #ff3366;
-            --civ-blue: #00d2ff;
-            --neon-green: #39ff14;
+            --spy-red: #ff3b30;
+            --civ-blue: #0a84ff;
+            --neon-green: #30d158;
+            --bg-dark: #121212;
+            --panel-bg: #1e1e1e;
         }
         body {
-            background: linear-gradient(-45deg, #1a0b2e, #0b1d3a, #1f0b1a, #0b2b1a);
-            background-size: 400% 400%;
-            animation: gradientBG 15s ease infinite;
-            font-family: 'Rajdhani', sans-serif;
-            color: #ffffff;
-            margin: 0;
-            padding: 0;
-            height: 100dvh;
-            width: 100vw;
-            overflow: hidden;
-            -webkit-touch-callout: none; -webkit-user-select: none; -khtml-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; 
+            background-color: var(--bg-dark);
+            font-family: 'Inter', sans-serif; 
+            color: #ffffff; 
+            margin: 0; padding: 0;
+            height: 100dvh; width: 100vw; overflow: hidden;
+            -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; 
         }
-        @keyframes gradientBG {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
+        
         .glass-panel {
-            background: rgba(20, 25, 40, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-            border-top: 2px solid var(--civ-blue); border-bottom: 2px solid var(--spy-red);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 210, 255, 0.2); border-radius: 20px;
-            max-height: 94dvh; display: flex; flex-direction: column;
+            background: var(--panel-bg); 
+            border-top: 3px solid var(--civ-blue); border-bottom: 3px solid var(--spy-red);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8); border-radius: 16px;
+            max-height: 96dvh; display: flex; flex-direction: column;
         }
+        
         .title-text {
-            font-family: 'Bangers', cursive;
-            background: linear-gradient(to right, var(--spy-red), #ff9933);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5); letter-spacing: 3px;
+            font-family: 'Poppins', sans-serif;
+            font-weight: 900;
+            color: #ffffff;
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }
+        .title-spy { color: var(--spy-red); }
+
         .avatar {
             width: 70px; height: 70px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            font-size: 1.8rem; position: relative; background: rgba(0,0,0,0.5); border: 3px solid;
-            box-shadow: inset 0 0 15px rgba(0,0,0,0.8); transition: transform 0.3s;
+            font-size: 2rem; background: #2c2c2c; border: 3px solid; transition: transform 0.2s;
         }
-        .avatar.civ { border-color: var(--civ-blue); box-shadow: 0 0 15px rgba(0, 210, 255, 0.5); }
-        .avatar.civ::after { content: "👨‍🚀"; }
-        .avatar.spy { border-color: var(--spy-red); box-shadow: 0 0 15px rgba(255, 51, 102, 0.5); }
+        .avatar.civ { border-color: var(--civ-blue); }
+        .avatar.civ::after { content: "🕵️‍♂️"; }
+        .avatar.spy { border-color: var(--spy-red); }
         .avatar.spy::after { content: "🥷"; }
-        .neo-input {
-            background: rgba(0, 0, 0, 0.6); border: 1px solid #444; color: #fff;
-            font-family: 'Orbitron', sans-serif; transition: all 0.3s; user-select: auto; -webkit-user-select: auto;
-        }
-        .neo-input:focus { border-color: var(--civ-blue); box-shadow: 0 0 10px rgba(0, 210, 255, 0.4); }
         
-        .btn-action { font-family: 'Orbitron', sans-serif; background: linear-gradient(45deg, #ff3366, #ff9933); box-shadow: 0 4px 15px rgba(255, 51, 102, 0.4); }
-        .btn-blue { font-family: 'Orbitron', sans-serif; background: linear-gradient(45deg, #0052D4, #4364F7, #6FB1FC); box-shadow: 0 4px 15px rgba(0, 210, 255, 0.4); }
-        .btn-dark { font-family: 'Orbitron', sans-serif; background: rgba(0, 0, 0, 0.5); border: 1px solid #666; }
-        .btn-exit { font-family: 'Orbitron', sans-serif; background: rgba(255, 0, 0, 0.8); color: white; border: 1px solid red; }
-
-        .secret-header {
-            background: repeating-linear-gradient(45deg, rgba(255, 51, 102, 0.1), rgba(255, 51, 102, 0.1) 10px, rgba(0, 0, 0, 0.3) 10px, rgba(0, 0, 0, 0.3) 20px);
-            border: 1px dashed var(--spy-red);
+        .neo-input {
+            background: #2c2c2c; border: 1px solid #444; color: #fff;
+            font-family: 'Inter', sans-serif; font-weight: 600; transition: all 0.2s; user-select: auto; -webkit-user-select: auto;
         }
-        #my-word { font-family: 'Orbitron', sans-serif; color: var(--neon-green); text-shadow: 0 0 10px rgba(57, 255, 20, 0.5); }
-        .chat-container { background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; }
-        .chat-header { background: #2a2a35; padding: 5px 10px; border-radius: 10px 10px 0 0; display: flex; gap: 6px; }
-        .dot { width: 10px; height: 10px; border-radius: 50%; } .dot-red { background: #ff5f56; } .dot-yel { background: #ffbd2e; } .dot-grn { background: #27c93f; }
-        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); } ::-webkit-scrollbar-thumb { background: var(--civ-blue); border-radius: 10px; }
-        #vote-area { background: rgba(255, 51, 102, 0.1); border: 1px solid var(--spy-red); box-shadow: inset 0 0 20px rgba(255, 51, 102, 0.2); }
+        .neo-input:focus { border-color: var(--civ-blue); outline: none;}
+        
+        .btn {
+            font-family: 'Poppins', sans-serif; font-weight: 700; border: none; transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-action { background: var(--spy-red); color: white; }
+        .btn-blue { background: var(--civ-blue); color: white;}
+        .btn-dark { background: #333; border: 1px solid #555; color: white;}
+        .btn-exit { background: transparent; color: #ff453a; border: 1px solid #ff453a; }
+
+        .secret-header { background: #2c2c2c; border: 1px solid #444; }
+        #my-word { font-family: 'Poppins', sans-serif; color: var(--neon-green); font-weight: 900;}
+        
+        .chat-container { background: #000; border: 1px solid #333; border-radius: 8px; }
+        .chat-header { background: #222; padding: 6px 10px; border-radius: 8px 8px 0 0; display: flex; gap: 6px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; } .dot-red { background: #ff5f56; } .dot-yel { background: #ffbd2e; } .dot-grn { background: #27c93f; }
+        
+        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
+        
+        #vote-area { background: #2c1a1a; border: 1px solid var(--spy-red); }
     </style>
 </head>
-<body class="flex flex-col items-center justify-center p-2 sm:p-4 pt-10 relative">
+<body class="flex flex-col items-center justify-center p-2 sm:p-4 pt-12 relative">
 
-    <!-- Fixed Active Players Top-Center Badge -->
-    <div class="absolute top-2 left-1/2 transform -translate-x-1/2 bg-gray-900/80 border border-green-500/50 px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold text-green-400 flex items-center gap-2 shadow-[0_0_10px_rgba(0,255,0,0.2)] z-50">
-        <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-        ACTIVE PLAYERS: <span id="active-users-count">0</span>
+    <div class="absolute top-3 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-green-500 px-4 py-2 rounded-full text-xs sm:text-sm font-bold text-green-400 flex items-center gap-2 z-50 shadow-md">
+        <div class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+        PLAYERS ONLINE: <span id="active-users-count">0</span>
     </div>
 
-    <div class="fixed top-0 left-0 w-full h-full pointer-events-none opacity-20" style="background-image: radial-gradient(circle at 50% 50%, #ffffff 1px, transparent 1px); background-size: 30px 30px;"></div>
-
-    <div class="w-full max-w-md glass-panel p-4 sm:p-6 relative z-10 w-full h-full mt-4">
+    <div class="w-full max-w-md glass-panel p-4 sm:p-6 relative z-10 w-full h-full mt-2">
         
-        <h1 class="text-4xl sm:text-5xl text-center mb-1 title-text shrink-0">SPY WORD</h1>
-        <p class="text-center text-gray-300 text-xs sm:text-sm mb-4 tracking-widest font-semibold uppercase shrink-0">Suspense Mode</p>
+        <h1 class="text-4xl sm:text-5xl text-center mb-1 title-text shrink-0">WORD <span class="title-spy">SPY</span></h1>
+        <p class="text-center text-gray-400 text-xs sm:text-sm mb-5 font-semibold uppercase shrink-0">Find the Imposter</p>
         
-        <!-- Join Section -->
         <div id="join-section" class="flex flex-col flex-1 min-h-0 justify-center space-y-3 overflow-y-auto">
-            <div class="flex justify-center gap-4 mb-2 shrink-0">
+            <div class="flex justify-center gap-6 mb-4 shrink-0">
                 <div class="avatar civ" title="Civilian"></div>
-                <div class="text-xl font-bold text-gray-400 mt-5">VS</div>
+                <div class="text-2xl font-black text-gray-500 mt-4">VS</div>
                 <div class="avatar spy" title="Spy"></div>
             </div>
 
-            <input type="text" id="username" placeholder="PLAYER NAME" class="w-full p-3 rounded neo-input text-lg font-bold outline-none text-center uppercase shrink-0">
+            <input type="text" id="username" placeholder="Enter Player Name" class="w-full p-3.5 rounded-lg neo-input text-lg text-center mb-1 shrink-0">
             
-            <select id="capacity-select" class="w-full p-3 rounded neo-input text-md font-bold outline-none text-center uppercase shrink-0">
-                <option value="4">Lobby Size: 4 Players</option>
-                <option value="6">Lobby Size: 6 Players</option>
+            <select id="capacity-select" class="w-full p-3.5 rounded-lg neo-input text-md text-center shrink-0">
+                <option value="4">4 Players Mode</option>
+                <option value="6">6 Players Mode</option>
             </select>
             
-            <button onclick="joinRoom('random')" class="w-full btn-action text-white p-3 rounded-lg font-bold text-md uppercase tracking-widest shrink-0 mt-2">Enter Lobby</button>
-            <button onclick="joinRoom('create')" class="w-full btn-blue text-white p-3 rounded-lg font-bold text-md uppercase tracking-widest shrink-0">Create Room</button>
-            <button onclick="joinRoom('join')" class="w-full btn-dark text-white p-3 rounded-lg font-bold text-md uppercase tracking-widest shrink-0">Join Room</button>
+            <button onclick="playSound('click'); joinRoom('random')" class="btn btn-action w-full p-3.5 rounded-lg text-md uppercase tracking-wider shrink-0 mt-3">Play Now (Auto Match)</button>
+            <button onclick="playSound('click'); joinRoom('create')" class="btn btn-blue w-full p-3.5 rounded-lg text-md uppercase tracking-wider shrink-0">Create Private Room</button>
+            <button onclick="playSound('click'); joinRoom('join')" class="btn btn-dark w-full p-3.5 rounded-lg text-md uppercase tracking-wider shrink-0">Join with Code</button>
         </div>
 
-        <!-- Game Section -->
         <div id="game-section" class="hidden mt-1 flex-col flex-1 min-h-0 w-full">
             
-            <div class="flex justify-between items-center mb-3 p-3 rounded-xl secret-header relative overflow-hidden shrink-0">
-                <div class="relative z-10">
-                    <p class="text-[10px] sm:text-xs text-gray-300 uppercase tracking-widest mb-1 font-bold">Classified Word <span id="current-room-display" class="ml-1 text-yellow-400 font-mono"></span></p>
-                    <p id="my-word" class="text-2xl font-bold">???</p>
+            <div class="flex justify-between items-center mb-3 p-3.5 rounded-xl secret-header relative shrink-0">
+                <div>
+                    <p class="text-[10px] sm:text-xs text-gray-400 uppercase font-bold mb-1">Your Secret Word <span id="current-room-display" class="ml-1 text-yellow-500"></span></p>
+                    <p id="my-word" class="text-2xl font-black">WAITING...</p>
                 </div>
                 
                 <div class="flex flex-col gap-2 items-end">
-                    <!-- Clickable Mic Status -->
-                    <div id="mic-status" onclick="toggleMic()" class="cursor-pointer bg-green-500/80 border border-green-500 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 shadow-[0_0_10px_rgba(0,255,0,0.5)]">
+                    <div id="mic-status" onclick="playSound('click'); toggleMic()" class="cursor-pointer bg-green-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2">
                         <div class="w-2 h-2 rounded-full bg-white animate-pulse"></div>
                         <span id="mic-text">MIC ON</span>
                     </div>
-                    <!-- Leave Lobby Button -->
-                    <button onclick="leaveGame()" class="btn-exit px-3 py-1 rounded-lg text-[10px] uppercase font-bold tracking-widest">EXIT</button>
+                    <button onclick="playSound('click'); leaveGame()" class="btn-exit px-3 py-1 rounded-lg text-[10px] font-bold">LEAVE</button>
                 </div>
             </div>
 
-            <div class="bg-gray-900/60 rounded-lg p-2 mb-3 border border-gray-700 shrink-0">
-                <p id="game-alert" class="text-yellow-400 font-bold text-center text-sm animate-pulse">Waiting for squad...</p>
+            <div class="bg-gray-800 rounded-lg p-2.5 mb-3 border border-gray-700 shrink-0">
+                <p id="game-alert" class="text-yellow-400 font-bold text-center text-sm">Waiting for other players...</p>
             </div>
 
-            <div id="turn-controls" class="hidden mb-3 shrink-0">
-                <button onclick="endMyTurn()" class="w-full btn-blue text-white p-2 rounded-lg font-bold text-md uppercase tracking-wider animate-bounce">Pass Comm (End Turn)</button>
+            <div id="turn-timer-container" class="hidden mb-3 shrink-0">
+                <div class="w-full bg-gray-700 rounded-full h-3 relative overflow-hidden">
+                    <div id="turn-progress-bar" class="bg-yellow-400 h-full w-full transition-all duration-1000 ease-linear"></div>
+                </div>
+                <p id="turn-countdown" class="text-center text-yellow-400 font-bold mt-1.5 text-xs">YOUR TURN: 15s</p>
             </div>
 
-            <div id="vote-area" class="hidden mb-3 p-3 rounded-xl text-center shrink-0">
-                <p class="text-red-500 font-bold text-md mb-2 tracking-wider" style="font-family: 'Orbitron', sans-serif;">TARGET LOCK: CAST VOTE</p>
+            <div id="vote-area" class="hidden mb-3 p-4 rounded-xl text-center shrink-0">
+                <p class="text-red-500 font-bold text-md mb-3 uppercase">Who is the Spy? Vote Now!</p>
                 <div id="vote-buttons" class="grid grid-cols-2 gap-2"></div>
             </div>
 
@@ -148,17 +146,26 @@
                     <div class="dot dot-red"></div>
                     <div class="dot dot-yel"></div>
                     <div class="dot dot-grn"></div>
-                    <span class="text-gray-400 text-[10px] ml-2 font-mono">comm_link_secure</span>
                 </div>
-                <div id="messages" class="flex-1 overflow-y-auto p-2 text-left text-sm flex flex-col gap-1 font-semibold"></div>
+                <div id="messages" class="flex-1 overflow-y-auto p-3 text-left text-sm flex flex-col gap-1.5 font-medium"></div>
             </div>
             
             <div class="flex gap-2 shrink-0">
-                <input type="text" id="chat-input" placeholder="Transmit message..." class="flex-1 p-2 rounded-lg neo-input outline-none text-sm">
-                <button onclick="sendChat()" class="bg-blue-600 hover:bg-blue-500 px-4 rounded-lg font-bold uppercase text-sm">Send</button>
+                <input type="text" id="chat-input" placeholder="Type a message..." class="flex-1 p-3 rounded-lg neo-input text-sm">
+                <button onclick="playSound('click'); sendChat()" class="btn btn-blue px-5 rounded-lg text-sm">SEND</button>
             </div>
         </div>
     </div>
+    
+    <!-- Audio Elements for Sound Effects -->
+    <audio id="sfx-click" src="https://actions.google.com/sounds/v1/ui/button_click.ogg"></audio>
+    <audio id="sfx-start" src="https://actions.google.com/sounds/v1/science_fiction/computer_beeps.ogg"></audio>
+    <audio id="sfx-turn" src="https://actions.google.com/sounds/v1/ui/pop_up_sound.ogg"></audio>
+    <audio id="sfx-timeout" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+    <audio id="sfx-spy-caught" src="https://actions.google.com/sounds/v1/crowds/crowd_cheering.ogg"></audio>
+    <audio id="sfx-civ-dead" src="https://actions.google.com/sounds/v1/alarms/radiation_meter_fast.ogg"></audio>
+    <audio id="sfx-game-over" src="https://actions.google.com/sounds/v1/science_fiction/power_down.ogg"></audio>
+
     <script src="/static/script.js"></script>
 </body>
 </html>
