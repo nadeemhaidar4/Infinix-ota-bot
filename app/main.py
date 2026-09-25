@@ -37,7 +37,15 @@ async def get():
     with open("static/index.html", "r") as f:
         return HTMLResponse(f.read())
 
-# Automatic Matchmaking Route
+# API: Active Users Count
+@app.get("/get_active_users")
+async def get_active_users():
+    total_users = 0
+    for room_data in manager.rooms.values():
+        total_users += len(room_data['connections'])
+    return {"active_users": total_users}
+
+# API: Random Matchmaking
 @app.get("/get_random_room")
 async def get_random_room():
     # Pehle khali room dhundho
@@ -51,6 +59,14 @@ async def get_random_room():
         if new_room not in manager.rooms:
             return {"room_id": new_room}
 
+# API: Create Specific New Room
+@app.get("/create_new_room")
+async def create_new_room():
+    while True:
+        new_room = str(random.randint(1000, 9999))
+        if new_room not in manager.rooms:
+            return {"room_id": new_room}
+
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     await websocket.accept()
@@ -58,7 +74,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     if room_id not in manager.rooms:
         manager.rooms[room_id] = {
             'connections': [],
-            'players': {}, # username -> {role, is_alive, word}
+            'players': {},
             'alive_list': [],
             'turn_index': 0,
             'votes': {},
@@ -132,7 +148,12 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
         del room['players'][username]
         if username in room['alive_list']:
             room['alive_list'].remove(username)
-        await manager.broadcast(room_id, {"type": "chat", "sender": "System", "text": f"{username} left."})
+        
+        # Clean up empty rooms
+        if len(room['connections']) == 0:
+            del manager.rooms[room_id]
+        else:
+            await manager.broadcast(room_id, {"type": "chat", "sender": "System", "text": f"{username} left."})
 
 async def start_turn(room_id):
     room = manager.rooms[room_id]
