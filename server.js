@@ -145,7 +145,6 @@ function isSocialMediaUrl(urlStr) {
         const url = new URL(urlStr);
         const hostname = url.hostname.replace(/^www\./, "");
         
-        // FIX: Agar URL already CDN ka hai, toh uspe scraper nahi chalana hai.
         if (hostname.includes("cdninstagram.com") || hostname.includes("fbcdn.net") || hostname.includes("googlevideo.com")) {
             return false;
         }
@@ -265,8 +264,6 @@ app.post("/api/inspect", async (req, res) => {
     } else if (isSocial) {
         const extractedData = await extractDirectVideoUrl(targetUrl);
         
-        // FIX: Ab original URL aur direct CDN URL dono ko cache me save karenge.
-        // Taki agar frontend CDN URL dubara bheje, toh code usko pehchaan le.
         extractionCache.set(targetUrl, extractedData);
         extractionCache.set(extractedData.url, extractedData);
         
@@ -361,8 +358,6 @@ app.get("/api/download", async (req, res) => {
     let customHeaders = {};
     let useCDNFetch = false;
 
-    // FIX: Yahan targetUrl CDN ka link ho ya original Instagram ka link, 
-    // cache se uske special headers uth jayenge aur yt-dlp error nahi dega.
     if (extractionCache.has(targetUrl)) {
         const cached = extractionCache.get(targetUrl);
         targetUrl = cached.url;
@@ -386,14 +381,23 @@ app.get("/api/download", async (req, res) => {
     });
 
     try {
+      // FIX 1: Frontend ya Browser se aane wale Range Headers ko aage CDN tak pass karna
+      let fetchHeaders = { ...customHeaders };
+      if (req.headers.range) {
+          fetchHeaders["Range"] = req.headers.range;
+      }
+
       let response;
       if (useCDNFetch) {
-          response = await fetchCDN(targetUrl, "GET", customHeaders, controller.signal);
+          response = await fetchCDN(targetUrl, "GET", fetchHeaders, controller.signal);
       } else {
-          response = await fetchSafe(targetUrl, { method: "GET", signal: controller.signal });
+          response = await fetchSafe(targetUrl, { method: "GET", headers: fetchHeaders, signal: controller.signal });
       }
       
-      if (!response.ok) return res.status(400).json({ ok: false, message: `Media server returned HTTP ${response.status}.` });
+      // Allow 200 (OK) and 206 (Partial Content for Range Requests)
+      if (!response.ok && response.status !== 206) {
+          return res.status(400).json({ ok: false, message: `Media server returned HTTP ${response.status}.` });
+      }
 
       const contentType = getContentType(response) || "video/mp4";
       const contentLength = Number(response.headers.get("content-length") || 0);
@@ -403,15 +407,26 @@ app.get("/api/download", async (req, res) => {
       }
 
       const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
-      const safeFilename = filename.replace(/[\r\n"']/g, ""); // Security ke liye taaki filename break na ho
+      
+      // FIX 2: URI Encode filename so spaces and weird characters don't break the Header parsing
+      const safeFilename = encodeURIComponent(filename.replace(/[\r\n"']/g, ""));
 
-      res.statusCode = 200;
+      // Set the appropriate Status code (200 or 206)
+      res.status(response.status);
+
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      // Use RFC 5987 encoding for filename to prevent browser truncation (..... issue fix)
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"; filename*=UTF-8''${safeFilename}`);
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Accept-Ranges", "bytes");
 
-      if (contentLength) res.setHeader("Content-Length", String(contentLength));
+      // FIX 3: Pass specific length and range headers to the browser correctly
+      if (response.headers.has("content-length")) {
+          res.setHeader("Content-Length", response.headers.get("content-length"));
+      }
+      if (response.headers.has("content-range")) {
+          res.setHeader("Content-Range", response.headers.get("content-range"));
+      }
 
       let total = 0;
       if (!response.body) throw new Error("Media stream unavailable.");
@@ -440,6 +455,7 @@ app.get("/api/download", async (req, res) => {
         message: error.name === "AbortError" ? "Download timed out." : error.message || "Unable to download this media."
       });
     }
+    // Agar download ke beech error aaye toh cleanly connection drop karo
     res.destroy();
   } finally {
     releaseDownload(ip);
