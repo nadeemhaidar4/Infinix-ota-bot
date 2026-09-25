@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Any
@@ -971,20 +971,65 @@ async def get_active_users(client_id: str | None = None) -> dict[str, int]:
 @app.get("/create_new_room")
 async def create_new_room(capacity: int = 6, mode: str = "spy") -> dict[str, Any]:
     if not valid_capacity(capacity):
-        return {"error": "Capacity must be between 4 and 8."}
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Capacity must be between 4 and 8."},
+        )
 
     mode = normalize_mode(mode)
-    while True:
+    for _ in range(100):
         room_id = "".join(random.choices(string.digits, k=4))
         if room_id not in rooms:
             rooms[room_id] = create_room(room_id, capacity, mode)
-            return {"room_id": room_id, "capacity": capacity, "mode": mode}
+            return {
+                "ok": True,
+                "room_id": room_id,
+                "capacity": capacity,
+                "mode": mode,
+                "join_url": f"{'/'}?room={room_id}",
+            }
+
+    return JSONResponse(
+        status_code=503,
+        content={"error": "Could not generate a room ID. Please try again."},
+    )
+
+
+@app.get("/room_info/{room_id}")
+async def room_info(room_id: str) -> dict[str, Any]:
+    room_id = str(room_id or "").strip()
+    if not (len(room_id) == 4 and room_id.isdigit()):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Room ID must be 4 digits."},
+        )
+
+    room = rooms.get(room_id)
+    if room is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Room not found. Check the Room ID."},
+        )
+
+    return {
+        "ok": True,
+        "room_id": room_id,
+        "capacity": room["capacity"],
+        "mode": room["mode"],
+        "state": room["state"],
+        "players": len(connected_usernames(room)),
+        "available_slots": max(0, room["capacity"] - len(connected_usernames(room))),
+        "joinable": room["state"] == "waiting" and len(connected_usernames(room)) < room["capacity"],
+    }
 
 
 @app.get("/get_random_room/{capacity}")
 async def get_random_room(capacity: int, mode: str = "spy") -> dict[str, Any]:
     if not valid_capacity(capacity):
-        return {"error": "Capacity must be between 4 and 8."}
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Capacity must be between 4 and 8."},
+        )
 
     mode = normalize_mode(mode)
     candidates = [
@@ -999,7 +1044,13 @@ async def get_random_room(capacity: int, mode: str = "spy") -> dict[str, Any]:
     if candidates:
         candidates.sort(key=lambda room: room["created_at"])
         room = candidates[0]
-        return {"room_id": room["room_id"], "capacity": capacity, "mode": mode}
+        return {
+            "ok": True,
+            "room_id": room["room_id"],
+            "capacity": capacity,
+            "mode": mode,
+            "players": len(connected_usernames(room)),
+        }
 
     return await create_new_room(capacity, mode)
 
@@ -1029,8 +1080,12 @@ async def websocket_endpoint(
 
     room = rooms.get(room_id)
     if room is None:
-        room = create_room(room_id, capacity, mode)
-        rooms[room_id] = room
+        await send_json(
+            websocket,
+            {"type": "error", "code": "ROOM_NOT_FOUND", "message": "Room not found. Please check the Room ID."},
+        )
+        await websocket.close(code=1008)
+        return
 
     if room["capacity"] != capacity:
         await send_json(
@@ -1062,17 +1117,37 @@ async def websocket_endpoint(
         await websocket.close()
         return
 
+    connected_numbers = {
+        int(p.get("number", 0))
+        for p in room["players"].values()
+        if p.get("connected")
+    }
+
     if existing:
+        old_number = int(existing.get("number", 0))
+        if old_number not in connected_numbers:
+            number = old_number
+        else:
+            number = next(
+                (n for n in range(1, room["capacity"] + 1) if n not in connected_numbers),
+                old_number,
+            )
+
         player = existing
         player.update(
+            number=number,
             ws=websocket,
             connected=True,
             last_seen=now(),
         )
     else:
+        number = next(
+            (n for n in range(1, room["capacity"] + 1) if n not in connected_numbers),
+            room["capacity"],
+        )
         player = {
             "username": username,
-            "number": len(room["players"]) + 1,
+            "number": number,
             "ws": websocket,
             "connected": True,
             "ready": False,
