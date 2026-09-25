@@ -2,608 +2,291 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pathlib import Path
-import asyncio
-import json
-import random
-import time
 from typing import Any
-
-
-# =========================================================
-# APP / PATHS
-# =========================================================
+import asyncio, json, random, string, time
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(title="Who Is The Spy")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-app.mount(
-    "/static",
-    StaticFiles(directory=str(STATIC_DIR)),
-    name="static"
-)
+MIN_PLAYERS, MAX_PLAYERS = 4, 8
 
-
-# =========================================================
-# CONFIG
-# =========================================================
-
-MIN_PLAYERS = 4
-MAX_PLAYERS = 8
+CATEGORY_TIME = 9
+CATEGORY_RESULT_TIME = 3
 
 TURN_TIME = 30
+VOTE_TIME = 30
 REACTION_TIME = 10
-ROOM_EXPIRE_SECONDS = 15 * 60
-ACTIVE_USER_TIMEOUT = 20
 
+ROOM_EXPIRE = 30 * 60
 
-# =========================================================
-# WORD PAIRS
-# =========================================================
-
-WORD_PAIRS = [
-    {"civilian": "Apple", "spy": "Mango"},
-    {"civilian": "School", "spy": "College"},
-    {"civilian": "Car", "spy": "Bike"},
-    {"civilian": "Dog", "spy": "Cat"},
-    {"civilian": "Pizza", "spy": "Burger"},
-    {"civilian": "River", "spy": "Lake"},
-    {"civilian": "Mountain", "spy": "Hill"},
-    {"civilian": "Ocean", "spy": "Sea"},
-    {"civilian": "Sun", "spy": "Moon"},
-    {"civilian": "Star", "spy": "Planet"},
-    {"civilian": "Tree", "spy": "Bush"},
-    {"civilian": "Flower", "spy": "Leaf"},
-    {"civilian": "Computer", "spy": "Laptop"},
-    {"civilian": "Phone", "spy": "Tablet"},
-    {"civilian": "Television", "spy": "Radio"},
-    {"civilian": "Book", "spy": "Magazine"},
-    {"civilian": "Pen", "spy": "Pencil"},
-    {"civilian": "Paper", "spy": "Notebook"},
-    {"civilian": "Chair", "spy": "Sofa"},
-    {"civilian": "Table", "spy": "Desk"},
-    {"civilian": "Door", "spy": "Window"},
-    {"civilian": "House", "spy": "Apartment"},
-    {"civilian": "City", "spy": "Village"},
-    {"civilian": "Country", "spy": "State"},
-    {"civilian": "Shirt", "spy": "T-shirt"},
-    {"civilian": "Pants", "spy": "Jeans"},
-    {"civilian": "Shoes", "spy": "Boots"},
-    {"civilian": "Hat", "spy": "Cap"},
-    {"civilian": "Glasses", "spy": "Goggles"},
-    {"civilian": "Watch", "spy": "Clock"},
-    {"civilian": "Gold", "spy": "Silver"},
-    {"civilian": "Diamond", "spy": "Ruby"},
-    {"civilian": "Coffee", "spy": "Tea"},
-    {"civilian": "Water", "spy": "Juice"},
-    {"civilian": "Milk", "spy": "Butter"},
-    {"civilian": "Bread", "spy": "Toast"},
-    {"civilian": "Cake", "spy": "Pastry"},
-    {"civilian": "Chocolate", "spy": "Candy"},
-    {"civilian": "Chicken", "spy": "Fish"},
-    {"civilian": "Egg", "spy": "Meat"},
-    {"civilian": "Potato", "spy": "Tomato"},
-    {"civilian": "Onion", "spy": "Garlic"},
-    {"civilian": "Doctor", "spy": "Nurse"},
-    {"civilian": "Teacher", "spy": "Student"},
-    {"civilian": "Police", "spy": "Army"},
-    {"civilian": "King", "spy": "Queen"},
-    {"civilian": "Prince", "spy": "Princess"},
-    {"civilian": "Actor", "spy": "Director"},
-    {"civilian": "Singer", "spy": "Dancer"},
-    {"civilian": "Piano", "spy": "Guitar"},
-    {"civilian": "Flute", "spy": "Violin"},
-    {"civilian": "Football", "spy": "Cricket"},
-    {"civilian": "Tennis", "spy": "Badminton"},
-    {"civilian": "Chess", "spy": "Ludo"},
-    {"civilian": "Running", "spy": "Walking"},
-    {"civilian": "Swimming", "spy": "Diving"},
-    {"civilian": "Summer", "spy": "Winter"},
-    {"civilian": "Rain", "spy": "Snow"},
-    {"civilian": "Wind", "spy": "Storm"},
-    {"civilian": "Fire", "spy": "Smoke"},
-    {"civilian": "Red", "spy": "Pink"},
-    {"civilian": "Blue", "spy": "Green"},
-    {"civilian": "Black", "spy": "White"},
-    {"civilian": "Yellow", "spy": "Orange"},
-    {"civilian": "Circle", "spy": "Square"},
-    {"civilian": "Triangle", "spy": "Rectangle"},
-    {"civilian": "Happy", "spy": "Sad"},
-    {"civilian": "Angry", "spy": "Cry"},
-    {"civilian": "Laugh", "spy": "Smile"},
-    {"civilian": "Love", "spy": "Hate"},
-    {"civilian": "Friend", "spy": "Enemy"},
-    {"civilian": "Brother", "spy": "Sister"},
-    {"civilian": "Father", "spy": "Mother"},
-    {"civilian": "Uncle", "spy": "Aunt"},
-    {"civilian": "Boy", "spy": "Girl"},
-    {"civilian": "Man", "spy": "Woman"},
-    {"civilian": "Baby", "spy": "Child"},
-    {"civilian": "Eye", "spy": "Ear"},
-    {"civilian": "Nose", "spy": "Mouth"},
-    {"civilian": "Hand", "spy": "Foot"},
-    {"civilian": "Hair", "spy": "Nail"},
-    {"civilian": "Heart", "spy": "Brain"},
-    {"civilian": "Blood", "spy": "Bone"},
-    {"civilian": "Hospital", "spy": "Clinic"},
-    {"civilian": "Bank", "spy": "ATM"},
-    {"civilian": "Market", "spy": "Mall"},
-    {"civilian": "Park", "spy": "Garden"},
-    {"civilian": "Zoo", "spy": "Museum"},
-    {"civilian": "Cinema", "spy": "Theatre"},
-    {"civilian": "Train", "spy": "Bus"},
-    {"civilian": "Airplane", "spy": "Helicopter"},
-    {"civilian": "Ship", "spy": "Boat"},
-    {"civilian": "Bicycle", "spy": "Scooter"},
-    {"civilian": "Road", "spy": "Street"},
-    {"civilian": "Bridge", "spy": "Tunnel"},
-    {"civilian": "Ticket", "spy": "Pass"},
-    {"civilian": "Map", "spy": "Compass"},
-    {"civilian": "Key", "spy": "Lock"},
-    {"civilian": "Mirror", "spy": "Glass"},
-    {"civilian": "Bottle", "spy": "Cup"},
-    {"civilian": "Plate", "spy": "Bowl"},
-    {"civilian": "Spoon", "spy": "Fork"},
-    {"civilian": "Soap", "spy": "Shampoo"},
-    {"civilian": "Towel", "spy": "Napkin"},
-    {"civilian": "Bed", "spy": "Cot"},
-    {"civilian": "Pillow", "spy": "Cushion"},
-    {"civilian": "Blanket", "spy": "Quilt"},
-    {"civilian": "Light", "spy": "Bulb"},
-    {"civilian": "Fan", "spy": "AC"},
-    {"civilian": "Heater", "spy": "Cooler"},
-    {"civilian": "Camera", "spy": "Lens"},
-    {"civilian": "Photo", "spy": "Video"},
-    {"civilian": "Movie", "spy": "Drama"},
-    {"civilian": "Song", "spy": "Music"},
-    {"civilian": "Poem", "spy": "Story"},
-    {"civilian": "Letter", "spy": "Email"},
-    {"civilian": "Newspaper", "spy": "Magazine"},
-    {"civilian": "News", "spy": "Gossip"},
-    {"civilian": "Internet", "spy": "Wifi"},
-    {"civilian": "Website", "spy": "App"},
-    {"civilian": "Game", "spy": "Sport"},
-    {"civilian": "Goal", "spy": "Point"},
-    {"civilian": "Win", "spy": "Lose"},
-    {"civilian": "Prize", "spy": "Award"},
-    {"civilian": "Money", "spy": "Coin"},
-    {"civilian": "Rich", "spy": "Poor"},
-    {"civilian": "Job", "spy": "Business"},
-    {"civilian": "Office", "spy": "Factory"},
-    {"civilian": "Worker", "spy": "Boss"},
-    {"civilian": "Salary", "spy": "Bonus"},
-    {"civilian": "Tax", "spy": "Bill"},
-    {"civilian": "Price", "spy": "Cost"},
-    {"civilian": "Buy", "spy": "Sell"},
-    {"civilian": "Shop", "spy": "Store"},
-    {"civilian": "Customer", "spy": "Client"},
-    {"civilian": "Lawyer", "spy": "Judge"},
-    {"civilian": "Court", "spy": "Jail"},
-    {"civilian": "Thief", "spy": "Robber"},
-    {"civilian": "Crime", "spy": "Sin"},
-    {"civilian": "Truth", "spy": "Lie"},
-    {"civilian": "Secret", "spy": "Mystery"},
-    {"civilian": "Magic", "spy": "Illusion"},
-    {"civilian": "Ghost", "spy": "Spirit"},
-    {"civilian": "Angel", "spy": "Demon"},
-    {"civilian": "Heaven", "spy": "Hell"},
-    {"civilian": "Life", "spy": "Death"},
-    {"civilian": "Birth", "spy": "Funeral"},
-    {"civilian": "Marriage", "spy": "Divorce"},
-    {"civilian": "Party", "spy": "Festival"},
-    {"civilian": "Gift", "spy": "Present"},
-    {"civilian": "Balloon", "spy": "Kite"},
-    {"civilian": "Toy", "spy": "Doll"},
-    {"civilian": "Puppy", "spy": "Kitten"},
-    {"civilian": "Tiger", "spy": "Lion"},
-    {"civilian": "Elephant", "spy": "Rhino"},
-    {"civilian": "Monkey", "spy": "Ape"},
-    {"civilian": "Bear", "spy": "Wolf"},
-    {"civilian": "Snake", "spy": "Lizard"},
-    {"civilian": "Bird", "spy": "Bat"},
-    {"civilian": "Eagle", "spy": "Hawk"},
-    {"civilian": "Parrot", "spy": "Pigeon"},
-    {"civilian": "Duck", "spy": "Swan"},
-    {"civilian": "Frog", "spy": "Toad"},
-    {"civilian": "Fish", "spy": "Shark"},
-    {"civilian": "Whale", "spy": "Dolphin"},
-    {"civilian": "Ant", "spy": "Bee"},
-    {"civilian": "Spider", "spy": "Scorpion"},
-    {"civilian": "Mosquito", "spy": "Fly"},
-    {"civilian": "Butterfly", "spy": "Moth"},
-    {"civilian": "Rose", "spy": "Lotus"},
-    {"civilian": "Jasmine", "spy": "Lily"},
-    {"civilian": "Sunflower", "spy": "Marigold"},
-    {"civilian": "Grass", "spy": "Weed"},
-    {"civilian": "Forest", "spy": "Jungle"},
-    {"civilian": "Desert", "spy": "Sand"},
-    {"civilian": "Rock", "spy": "Stone"},
-    {"civilian": "Dust", "spy": "Dirt"},
-    {"civilian": "Mud", "spy": "Clay"},
-    {"civilian": "Ice", "spy": "Snow"},
-    {"civilian": "Flame", "spy": "Ember"},
-    {"civilian": "Heat", "spy": "Cold"},
-    {"civilian": "Day", "spy": "Night"},
-    {"civilian": "Morning", "spy": "Evening"},
-    {"civilian": "Today", "spy": "Tomorrow"},
-    {"civilian": "Week", "spy": "Month"},
-    {"civilian": "Year", "spy": "Decade"},
-    {"civilian": "Past", "spy": "Future"},
-    {"civilian": "History", "spy": "Science"},
-    {"civilian": "Math", "spy": "Physics"},
-    {"civilian": "English", "spy": "Hindi"},
+CATEGORIES = [
+    "Life",
+    "Sports",
+    "Characters/Professions",
+    "Animals/Plants/Nature",
+    "Other",
+    "Random",
 ]
 
+WORD_BANK = {
+    "Life": [
+        ("Mopping", "Sweeping"),
+        ("Cooking", "Baking"),
+        ("Shower", "Bath"),
+        ("Birthday", "Wedding"),
+        ("School", "College"),
+        ("Doctor", "Nurse"),
+        ("Hospital", "Clinic"),
+        ("Breakfast", "Lunch"),
+        ("Coffee", "Tea"),
+        ("Bus", "Train"),
+        ("House", "Apartment"),
+        ("Market", "Mall"),
+        ("Phone", "Tablet"),
+        ("Movie", "Drama"),
+        ("Book", "Magazine"),
+        ("Pen", "Pencil"),
+        ("Chair", "Sofa"),
+        ("Bed", "Couch"),
+        ("Money", "Coin"),
+        ("Job", "Business"),
+        ("Office", "Factory"),
+        ("Soap", "Shampoo"),
+        ("Towel", "Napkin"),
+        ("Key", "Lock"),
+        ("Bottle", "Cup"),
+        ("Spoon", "Fork"),
+    ],
 
-# =========================================================
-# GLOBAL STATE
-# =========================================================
+    "Sports": [
+        ("Football", "Cricket"),
+        ("Tennis", "Badminton"),
+        ("Basketball", "Volleyball"),
+        ("Running", "Walking"),
+        ("Swimming", "Diving"),
+        ("Boxing", "Wrestling"),
+        ("Golf", "Hockey"),
+        ("Chess", "Ludo"),
+        ("Bat", "Racket"),
+        ("Goal", "Point"),
+        ("Stadium", "Arena"),
+        ("Coach", "Referee"),
+    ],
 
-rooms: dict[str, dict[str, Any]] = {}
-active_clients: dict[str, float] = {}
-rooms_lock = asyncio.Lock()
+    "Characters/Professions": [
+        ("Police", "Detective"),
+        ("Teacher", "Professor"),
+        ("Doctor", "Surgeon"),
+        ("Pilot", "Driver"),
+        ("Actor", "Director"),
+        ("Singer", "Dancer"),
+        ("Chef", "Waiter"),
+        ("Lawyer", "Judge"),
+        ("Farmer", "Gardener"),
+        ("Firefighter", "Soldier"),
+        ("King", "Queen"),
+        ("Prince", "Princess"),
+    ],
+
+    "Animals/Plants/Nature": [
+        ("Dog", "Cat"),
+        ("Tiger", "Lion"),
+        ("Elephant", "Rhino"),
+        ("Monkey", "Ape"),
+        ("Bear", "Wolf"),
+        ("Snake", "Lizard"),
+        ("Eagle", "Hawk"),
+        ("Parrot", "Pigeon"),
+        ("Duck", "Swan"),
+        ("Fish", "Shark"),
+        ("Rose", "Lotus"),
+        ("Jasmine", "Lily"),
+        ("Tree", "Bush"),
+        ("Flower", "Leaf"),
+        ("Forest", "Jungle"),
+        ("River", "Lake"),
+        ("Mountain", "Hill"),
+        ("Ocean", "Sea"),
+        ("Rain", "Snow"),
+        ("Desert", "Beach"),
+    ],
+
+    "Other": [
+        ("Computer", "Laptop"),
+        ("Camera", "Video"),
+        ("Television", "Radio"),
+        ("Music", "Song"),
+        ("Map", "Compass"),
+        ("Mirror", "Glass"),
+        ("Door", "Window"),
+        ("Table", "Desk"),
+        ("Light", "Bulb"),
+        ("Fan", "AC"),
+        ("Gold", "Silver"),
+        ("Diamond", "Ruby"),
+        ("Red", "Pink"),
+        ("Blue", "Green"),
+        ("Black", "White"),
+        ("Circle", "Square"),
+        ("Triangle", "Rectangle"),
+        ("Fire", "Smoke"),
+        ("Sun", "Moon"),
+        ("Star", "Planet"),
+    ],
+}
 
 
-# =========================================================
-# HELPERS
-# =========================================================
-
-def now() -> float:
+def now():
     return time.time()
 
 
-def valid_capacity(capacity: int) -> bool:
-    return MIN_PLAYERS <= capacity <= MAX_PLAYERS
+def clean_name(value):
+    return "".join(
+        c for c in str(value or "").strip()
+        if c.isprintable()
+    )[:20].strip()
 
 
-def valid_mode(mode: str) -> bool:
-    return mode in ("spy", "wordless")
+def valid_capacity(value):
+    return MIN_PLAYERS <= value <= MAX_PLAYERS
 
 
-def clean_username(name: str) -> str:
-    name = (name or "").strip()
-
-    if not name:
-        return ""
-
-    # Keep names reasonably short.
-    name = name[:20]
-
-    # Remove control characters.
-    name = "".join(ch for ch in name if ch.isprintable())
-
-    return name.strip()
-
-
-def make_room(room_id: str, capacity: int, mode: str) -> dict[str, Any]:
+def make_room(room_id, capacity):
     return {
         "room_id": room_id,
         "capacity": capacity,
-        "mode": mode,
         "state": "waiting",
         "created_at": now(),
         "last_activity": now(),
 
-        # username -> player dict
         "players": {},
-
-        # Current connected websocket objects
         "connections": set(),
 
-        # Alive player usernames
-        "alive_list": [],
+        "alive": [],
+        "speaker": None,
 
-        # Speaking
-        "current_speaker": None,
-        "turn_task": None,
         "turn_id": 0,
-
-        # Voting
-        "votes": {},
-
-        # Selected word pair / spy
-        "pair": None,
-        "spy_username": None,
-
-        # Reaction/new round timer
+        "turn_task": None,
+        "vote_task": None,
         "reaction_task": None,
+        "category_task": None,
+
+        "category_votes": {},
+        "category": None,
+        "pair": None,
+
+        "spy": None,
+        "votes": {},
+        "round": 0,
     }
 
 
-def connected_usernames(room: dict[str, Any]) -> list[str]:
+rooms: dict[str, dict[str, Any]] = {}
+
+
+def connected_names(room):
     return [
-        username
-        for username, data in room["players"].items()
-        if data.get("connected") is True
-        and data.get("ws") is not None
+        n
+        for n, p in room["players"].items()
+        if p.get("connected") and p.get("ws")
     ]
 
 
-def alive_connected_usernames(room: dict[str, Any]) -> list[str]:
+def alive_names(room):
     return [
-        username
-        for username in room["alive_list"]
-        if username in room["players"]
-        and room["players"][username].get("connected") is True
-        and room["players"][username].get("is_alive") is True
-    ]
-
-
-def player_snapshot(room: dict[str, Any]) -> list[dict[str, Any]]:
-    result = []
-
-    for username in connected_usernames(room):
-        player = room["players"][username]
-
-        result.append(
-            {
-                "username": username,
-                "ready": bool(player.get("ready", False)),
-                "alive": bool(player.get("is_alive", True)),
-            }
+        n
+        for n in room["alive"]
+        if (
+            n in room["players"]
+            and room["players"][n].get("connected")
+            and room["players"][n].get("alive")
         )
-
-    return result
-
-
-def all_players_ready(room: dict[str, Any]) -> bool:
-    users = connected_usernames(room)
-
-    if len(users) != room["capacity"]:
-        return False
-
-    return all(
-        room["players"][username].get("ready", False)
-        for username in users
-    )
+    ]
 
 
-def cancel_task(task: asyncio.Task | None) -> None:
-    if task and not task.done() and task is not asyncio.current_task():
+def snapshot(room):
+    return [
+        {
+            "username": n,
+            "number": p["number"],
+            "ready": bool(p.get("ready")),
+            "alive": bool(p.get("alive", True)),
+        }
+        for n, p in room["players"].items()
+        if p.get("connected")
+    ]
+
+
+def cancel(task):
+    if task and not task.done():
         task.cancel()
 
 
-async def send_json(websocket: WebSocket, payload: dict[str, Any]) -> None:
+async def send(ws, payload):
     try:
-        await websocket.send_text(json.dumps(payload))
+        await ws.send_text(json.dumps(payload))
     except Exception:
         pass
 
 
-# =========================================================
-# ROOM MANAGER
-# =========================================================
-
-class RoomManager:
-
-    async def cleanup_expired_rooms(self) -> None:
-        current = now()
-
-        async with rooms_lock:
-            delete_ids = []
-
-            for room_id, room in rooms.items():
-                connected = len(room["connections"])
-
-                if connected == 0:
-                    if current - room["last_activity"] > ROOM_EXPIRE_SECONDS:
-                        delete_ids.append(room_id)
-
-            for room_id in delete_ids:
-                room = rooms.get(room_id)
-
-                if room:
-                    cancel_task(room.get("turn_task"))
-                    cancel_task(room.get("reaction_task"))
-
-                rooms.pop(room_id, None)
-
-    async def new_room(self, capacity: int, mode: str) -> str:
-        await self.cleanup_expired_rooms()
-
-        async with rooms_lock:
-            while True:
-                room_id = str(random.randint(1000, 9999))
-
-                if room_id not in rooms:
-                    rooms[room_id] = make_room(
-                        room_id,
-                        capacity,
-                        mode
-                    )
-                    return room_id
-
-    async def random_room(self, capacity: int, mode: str) -> str:
-        await self.cleanup_expired_rooms()
-
-        async with rooms_lock:
-            # Prefer a waiting room with same mode/capacity.
-            candidates = []
-
-            for room_id, room in rooms.items():
-                if (
-                    room["state"] == "waiting"
-                    and room["capacity"] == capacity
-                    and room["mode"] == mode
-                    and len(room["connections"]) < capacity
-                ):
-                    candidates.append(room_id)
-
-            if candidates:
-                candidates.sort(
-                    key=lambda room_id: rooms[room_id]["created_at"]
-                )
-
-                rooms[candidates[0]]["last_activity"] = now()
-                return candidates[0]
-
-            # No available room: reserve a new one.
-            while True:
-                room_id = str(random.randint(1000, 9999))
-
-                if room_id not in rooms:
-                    rooms[room_id] = make_room(
-                        room_id,
-                        capacity,
-                        mode
-                    )
-                    return room_id
-
-
-manager = RoomManager()
-
-
-# =========================================================
-# HTTP
-# =========================================================
-
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    index_file = STATIC_DIR / "index.html"
-
-    if not index_file.exists():
-        return HTMLResponse(
-            "<h1>static/index.html not found</h1>",
-            status_code=500
-        )
-
-    return HTMLResponse(
-        index_file.read_text(encoding="utf-8")
-    )
-
-
-@app.get("/get_active_users")
-async def get_active_users(client_id: str | None = None):
-    current_time = now()
-
-    if client_id:
-        active_clients[client_id] = current_time
-
-    stale = [
-        cid
-        for cid, last_seen in active_clients.items()
-        if current_time - last_seen > ACTIVE_USER_TIMEOUT
-    ]
-
-    for cid in stale:
-        active_clients.pop(cid, None)
-
-    return {
-        "active_users": len(active_clients)
-    }
-
-
-@app.get("/get_random_room/{capacity}")
-async def get_random_room(
-    capacity: int,
-    mode: str = "spy"
-):
-    if not valid_capacity(capacity):
-        return {
-            "error": "Capacity must be between 4 and 8."
-        }
-
-    if not valid_mode(mode):
-        mode = "spy"
-
-    room_id = await manager.random_room(
-        capacity,
-        mode
-    )
-
-    return {
-        "room_id": room_id,
-        "capacity": capacity,
-        "mode": mode
-    }
-
-
-@app.get("/create_new_room")
-async def create_new_room(
-    capacity: int = 6,
-    mode: str = "spy"
-):
-    if not valid_capacity(capacity):
-        return {
-            "error": "Capacity must be between 4 and 8."
-        }
-
-    if not valid_mode(mode):
-        mode = "spy"
-
-    room_id = await manager.new_room(
-        capacity,
-        mode
-    )
-
-    return {
-        "room_id": room_id,
-        "capacity": capacity,
-        "mode": mode
-    }
-
-
-# =========================================================
-# BROADCAST FUNCTIONS
-# =========================================================
-
-async def broadcast(room: dict[str, Any], payload: dict[str, Any]) -> None:
-    connections = list(room["connections"])
-
-    if not connections:
-        return
-
+async def broadcast(room, payload):
     message = json.dumps(payload)
+    dead = []
 
-    dead_connections = []
-
-    for ws in connections:
+    for ws in list(room["connections"]):
         try:
             await ws.send_text(message)
         except Exception:
-            dead_connections.append(ws)
+            dead.append(ws)
 
-    for ws in dead_connections:
+    for ws in dead:
         room["connections"].discard(ws)
 
 
-async def broadcast_lobby(room: dict[str, Any]) -> None:
+async def to_player(room, username, payload):
+    player = room["players"].get(username)
+
+    if player and player.get("ws"):
+        await send(player["ws"], payload)
+
+
+async def lobby(room):
     await broadcast(
         room,
         {
             "type": "lobby_update",
             "state": room["state"],
             "capacity": room["capacity"],
-            "mode": room["mode"],
-            "players": player_snapshot(room),
-            "current_speaker": room.get("current_speaker"),
-        }
+            "players": snapshot(room),
+        },
     )
 
 
-# =========================================================
-# GAME WIN / END
-# =========================================================
+def choose_pair(category):
+    if category == "Random":
+        category = random.choice(list(WORD_BANK))
 
-async def finish_game(
-    room: dict[str, Any],
-    winner: str,
-    message: str
-) -> None:
+    return category, random.choice(WORD_BANK[category])
 
+
+async def finish_game(room, winner, message):
     if room["state"] == "game_over":
         return
 
+    for key in (
+        "turn_task",
+        "vote_task",
+        "reaction_task",
+        "category_task",
+    ):
+        cancel(room.get(key))
+        room[key] = None
+
     room["state"] = "game_over"
-    room["last_activity"] = now()
-
-    cancel_task(room.get("turn_task"))
-    cancel_task(room.get("reaction_task"))
-
-    room["turn_task"] = None
-    room["reaction_task"] = None
-    room["current_speaker"] = None
+    room["speaker"] = None
 
     await broadcast(
         room,
@@ -611,117 +294,171 @@ async def finish_game(
             "type": "game_over",
             "winner": winner,
             "message": message,
-            "spy_player": room.get("spy_username"),
-        }
+            "spy_player": room.get("spy"),
+            "word": room["pair"][0] if room.get("pair") else None,
+            "spy_word": room["pair"][1] if room.get("pair") else None,
+        },
     )
 
 
-async def check_win_after_disconnect(
-    room: dict[str, Any],
-    disconnected_username: str
-) -> bool:
-
-    if room["state"] not in ("playing", "voting"):
-        return False
-
-    player = room["players"].get(disconnected_username)
-
-    if not player:
-        return False
-
-    # If the spy leaves during a live game, civilians win.
-    if (
-        player.get("role") == "spy"
-        and room["state"] != "waiting"
-    ):
-        await finish_game(
-            room,
-            "civilians",
-            f"{disconnected_username} was the SPY and left the room. Civilians WIN!"
-        )
-        return True
-
-    alive = alive_connected_usernames(room)
-
-    if len(alive) <= 2:
-        await finish_game(
-            room,
-            "spy",
-            "Only two players remain. SPY WINS!"
-        )
-        return True
-
-    return False
-
-
-# =========================================================
-# TURN SYSTEM
-# =========================================================
-
-async def turn_timeout_worker(
-    room_id: str,
-    expected_turn_id: int,
-    speaker: str
-) -> None:
-
+async def category_worker(room_id):
     try:
-        await asyncio.sleep(TURN_TIME)
+        await asyncio.sleep(CATEGORY_TIME)
     except asyncio.CancelledError:
         return
 
     room = rooms.get(room_id)
 
-    if not room:
+    if not room or room["state"] != "category":
         return
 
-    if room["state"] != "playing":
-        return
+    counts = {c: 0 for c in CATEGORIES}
 
-    if room["turn_id"] != expected_turn_id:
-        return
+    for category in room["category_votes"].values():
+        if category in counts:
+            counts[category] += 1
 
-    if room.get("current_speaker") != speaker:
-        return
+    max_count = max(counts.values()) if counts else 0
+
+    leaders = [
+        c
+        for c, count in counts.items()
+        if count == max_count and count > 0
+    ]
+
+    selected = (
+        random.choice(leaders)
+        if leaders
+        else random.choice(CATEGORIES)
+    )
+
+    category, pair = choose_pair(selected)
+
+    room["category"] = category
+    room["pair"] = pair
+    room["state"] = "category_result"
 
     await broadcast(
         room,
         {
-            "type": "turn_timeout",
-            "current_player": speaker
-        }
+            "type": "category_result",
+            "category": category,
+            "seconds": CATEGORY_RESULT_TIME,
+        },
     )
 
-    await advance_turn(
+    try:
+        await asyncio.sleep(CATEGORY_RESULT_TIME)
+    except asyncio.CancelledError:
+        return
+
+    if room["state"] == "category_result":
+        await start_first_round(room)
+
+
+async def start_category(room):
+    if len(connected_names(room)) < MIN_PLAYERS:
+        room["state"] = "waiting"
+        await lobby(room)
+        return
+
+    room["state"] = "category"
+    room["category_votes"] = {}
+    room["category"] = None
+    room["pair"] = None
+
+    await broadcast(
         room,
-        speaker,
-        automatic=True
+        {
+            "type": "category_select",
+            "seconds": CATEGORY_TIME,
+            "categories": CATEGORIES,
+        },
+    )
+
+    cancel(room.get("category_task"))
+
+    room["category_task"] = asyncio.create_task(
+        category_worker(room["room_id"])
     )
 
 
-async def start_turn(
-    room: dict[str, Any],
-    speaker: str
-) -> None:
+async def start_first_round(room):
+    users = connected_names(room)
 
+    if len(users) < MIN_PLAYERS:
+        room["state"] = "waiting"
+        await lobby(room)
+        return
+
+    spy = random.choice(users)
+
+    room["spy"] = spy
+    room["alive"] = users[:]
+    random.shuffle(room["alive"])
+
+    room["round"] = 1
+    room["votes"] = {}
+
+    for name in users:
+        player = room["players"][name]
+
+        player.update(
+            alive=True,
+            ready=False,
+            role="spy" if name == spy else "civilian",
+            word=(
+                room["pair"][1]
+                if name == spy
+                else room["pair"][0]
+            ),
+        )
+
+        await send(
+            player["ws"],
+            {
+                "type": "role_info",
+                "role": player["role"],
+                "word": player["word"],
+                "category": room["category"],
+                "round": 1,
+            },
+        )
+
+    room["state"] = "playing"
+
+    await broadcast(
+        room,
+        {
+            "type": "round_start",
+            "round": 1,
+            "category": room["category"],
+            "seconds": TURN_TIME,
+            "players": snapshot(room),
+        },
+    )
+
+    await asyncio.sleep(0.35)
+
+    alive = alive_names(room)
+
+    if alive:
+        await start_turn(room, alive[0])
+
+
+async def start_turn(room, speaker):
     if room["state"] != "playing":
         return
 
-    if speaker not in room["alive_list"]:
+    if speaker not in alive_names(room):
         return
 
-    if (
-        speaker not in room["players"]
-        or not room["players"][speaker].get("is_alive", False)
-        or not room["players"][speaker].get("connected", False)
-    ):
-        return
-
-    cancel_task(room.get("turn_task"))
+    cancel(room.get("turn_task"))
 
     room["turn_id"] += 1
+
     turn_id = room["turn_id"]
-    room["current_speaker"] = speaker
-    room["last_activity"] = now()
+    room["speaker"] = speaker
 
     await broadcast(
         room,
@@ -730,186 +467,165 @@ async def start_turn(
             "current_player": speaker,
             "seconds": TURN_TIME,
             "turn_id": turn_id,
-        }
+            "round": room["round"],
+        },
     )
 
     room["turn_task"] = asyncio.create_task(
-        turn_timeout_worker(
+        turn_timeout(
             room["room_id"],
             turn_id,
-            speaker
+            speaker,
         )
     )
 
 
-async def begin_voting(room: dict[str, Any]) -> None:
-
-    if room["state"] != "playing":
-        return
-
-    cancel_task(room.get("turn_task"))
-    room["turn_task"] = None
-
-    room["state"] = "voting"
-    room["current_speaker"] = None
-    room["votes"] = {}
-    room["last_activity"] = now()
-
-    alive = alive_connected_usernames(room)
-
-    await broadcast(
-        room,
-        {
-            "type": "start_voting",
-            "players": alive
-        }
-    )
-
-
-async def advance_turn(
-    room: dict[str, Any],
-    finished_speaker: str,
-    automatic: bool = False
-) -> None:
-
-    if room["state"] != "playing":
-        return
-
-    cancel_task(room.get("turn_task"))
-    room["turn_task"] = None
-
-    alive = alive_connected_usernames(room)
-    room["alive_list"] = alive
-
-    if len(alive) <= 2:
-        await finish_game(
-            room,
-            "spy",
-            "Only two players remain. SPY WINS!"
-        )
-        return
-
-    if finished_speaker in alive:
-        current_index = alive.index(finished_speaker)
-    else:
-        current_index = -1
-
-    next_index = current_index + 1
-
-    if next_index >= len(alive):
-        await begin_voting(room)
-        return
-
-    next_player = alive[next_index]
-
-    await start_turn(
-        room,
-        next_player
-    )
-
-
-async def restart_round_after_reaction(
-    room_id: str,
-    dead_player: str
-) -> None:
-
+async def turn_timeout(room_id, turn_id, speaker):
     try:
-        await asyncio.sleep(REACTION_TIME)
+        await asyncio.sleep(TURN_TIME)
     except asyncio.CancelledError:
         return
 
     room = rooms.get(room_id)
 
-    if not room:
+    if (
+        room
+        and room["state"] == "playing"
+        and room["turn_id"] == turn_id
+        and room["speaker"] == speaker
+    ):
+        await advance_turn(room, speaker)
+
+
+async def advance_turn(room, finished):
+    if room["state"] != "playing":
         return
 
-    if room["state"] != "reaction":
-        return
+    cancel(room.get("turn_task"))
+    room["turn_task"] = None
 
-    alive = alive_connected_usernames(room)
-    room["alive_list"] = alive
+    alive = alive_names(room)
+    room["alive"] = alive
 
     if len(alive) <= 2:
         await finish_game(
             room,
             "spy",
-            "Only two players remain. SPY WINS!"
+            "Only two players remain. The SPY wins!",
         )
         return
 
-    room["state"] = "playing"
-    room["current_speaker"] = None
-    room["turn_id"] += 1
-    room["last_activity"] = now()
+    try:
+        index = alive.index(finished)
+    except ValueError:
+        index = -1
+
+    next_index = index + 1
+
+    if next_index >= len(alive):
+        await begin_voting(room)
+    else:
+        await start_turn(room, alive[next_index])
+
+
+async def begin_voting(room):
+    if room["state"] != "playing":
+        return
+
+    cancel(room.get("turn_task"))
+
+    room["turn_task"] = None
+    room["speaker"] = None
+    room["state"] = "voting"
+    room["votes"] = {}
+
+    alive = alive_names(room)
 
     await broadcast(
         room,
         {
-            "type": "new_round",
-            "players": alive
-        }
+            "type": "start_voting",
+            "players": alive,
+            "seconds": VOTE_TIME,
+            "round": room["round"],
+        },
     )
 
-    await asyncio.sleep(0.5)
+    cancel(room.get("vote_task"))
 
-    if room["state"] == "playing" and alive:
-        await start_turn(
-            room,
-            alive[0]
+    room["vote_task"] = asyncio.create_task(
+        vote_timeout(
+            room["room_id"],
+            room["round"],
         )
+    )
 
 
-# =========================================================
-# VOTING
-# =========================================================
-
-async def calculate_votes(room: dict[str, Any]) -> None:
-
-    if room["state"] != "voting":
+async def vote_timeout(room_id, round_no):
+    try:
+        await asyncio.sleep(VOTE_TIME)
+    except asyncio.CancelledError:
         return
 
-    votes = room["votes"]
+    room = rooms.get(room_id)
 
-    if not votes:
+    if (
+        not room
+        or room["state"] != "voting"
+        or room["round"] != round_no
+    ):
         return
 
-    alive = set(alive_connected_usernames(room))
-
-    valid_votes = [
-        candidate
-        for voter, candidate in votes.items()
-        if voter in alive
-        and candidate in alive
-        and voter != candidate
-    ]
-
-    if not valid_votes:
-        room["votes"] = {}
-
+    if not room["votes"]:
         await broadcast(
             room,
             {
-                "type": "vote_reset",
-                "message": "No valid votes. Voting again."
-            }
+                "type": "vote_tie",
+                "players": alive_names(room),
+                "message": "Time is up. Everyone vote again.",
+            },
+        )
+
+        room["vote_task"] = asyncio.create_task(
+            vote_timeout(room_id, round_no)
         )
 
         return
 
-    counts: dict[str, int] = {}
+    await calculate_votes(room)
 
-    for candidate in valid_votes:
-        counts[candidate] = counts.get(candidate, 0) + 1
+
+async def calculate_votes(room):
+    if room["state"] != "voting":
+        return
+
+    cancel(room.get("vote_task"))
+    room["vote_task"] = None
+
+    alive = set(alive_names(room))
+
+    valid_votes = [
+        vote
+        for vote in room["votes"].values()
+        if vote in alive
+    ]
+
+    if not valid_votes:
+        return
+
+    counts = {}
+
+    for vote in valid_votes:
+        counts[vote] = counts.get(vote, 0) + 1
 
     highest = max(counts.values())
 
     leaders = [
-        player
-        for player, count in counts.items()
+        name
+        for name, count in counts.items()
         if count == highest
     ]
 
-    # Tie -> voting again.
     if len(leaders) > 1:
         room["votes"] = {}
 
@@ -917,587 +633,627 @@ async def calculate_votes(room: dict[str, Any]) -> None:
             room,
             {
                 "type": "vote_tie",
-                "players": leaders,
-                "message": "Vote tie! Everyone vote again."
-            }
+                "players": alive_names(room),
+                "message": "Vote tie! Everyone vote again.",
+            },
         )
 
-        await asyncio.sleep(1)
-
-        if room["state"] == "voting":
-            await broadcast(
-                room,
-                {
-                    "type": "start_voting",
-                    "players": alive_connected_usernames(room)
-                }
+        room["vote_task"] = asyncio.create_task(
+            vote_timeout(
+                room["room_id"],
+                room["round"],
             )
+        )
 
         return
 
-    eliminated_player = leaders[0]
+    eliminated = leaders[0]
+    player = room["players"][eliminated]
 
-    if eliminated_player not in room["players"]:
-        return
+    await broadcast(
+        room,
+        {
+            "type": "vote_result",
+            "eliminated": eliminated,
+            "number": player["number"],
+            "role": player.get("role"),
+            "round": room["round"],
+        },
+    )
 
-    eliminated_role = room["players"][eliminated_player].get("role")
-
-    # Spy caught.
-    if eliminated_role == "spy":
+    if player.get("role") == "spy":
+        await asyncio.sleep(1)
 
         await finish_game(
             room,
             "civilians",
-            f"{eliminated_player} was the SPY! Civilians WIN!"
+            f"No.{player['number']} is out. "
+            f"{eliminated} is the SPY!",
         )
 
         return
 
-    # Civilian eliminated.
-    room["players"][eliminated_player]["is_alive"] = False
-    room["players"][eliminated_player]["ready"] = False
+    player["alive"] = False
 
-    if eliminated_player in room["alive_list"]:
-        room["alive_list"].remove(eliminated_player)
+    if eliminated in room["alive"]:
+        room["alive"].remove(eliminated)
 
-    alive = alive_connected_usernames(room)
-    room["alive_list"] = alive
+    alive_now = alive_names(room)
+    room["alive"] = alive_now
+
+    if len(alive_now) <= 2:
+        await asyncio.sleep(1)
+
+        await finish_game(
+            room,
+            "spy",
+            f"No.{player['number']} is out. "
+            f"{eliminated} was a villager. "
+            f"Only two players remain.",
+        )
+
+        return
 
     room["state"] = "reaction"
-    room["current_speaker"] = None
-    room["votes"] = {}
-    room["last_activity"] = now()
+    room["speaker"] = None
 
     await broadcast(
         room,
         {
             "type": "reaction_phase",
-            "dead_player": eliminated_player,
+            "dead_player": eliminated,
+            "dead_number": player["number"],
             "seconds": REACTION_TIME,
             "message": (
-                f"{eliminated_player} was a CIVILIAN! "
-                f"10 seconds reaction phase."
-            )
-        }
+                f"No.{player['number']} is out. "
+                f"{eliminated} is a villager!"
+            ),
+        },
     )
+
+    cancel(room.get("reaction_task"))
+
+    room["reaction_task"] = asyncio.create_task(
+        reaction_worker(room["room_id"])
+    )
+
+
+async def reaction_worker(room_id):
+    try:
+        await asyncio.sleep(REACTION_TIME)
+    except asyncio.CancelledError:
+        return
+
+    room = rooms.get(room_id)
+
+    if not room or room["state"] != "reaction":
+        return
+
+    alive = alive_names(room)
 
     if len(alive) <= 2:
         await finish_game(
             room,
             "spy",
-            f"{eliminated_player} was a Civilian. SPY WINS!"
+            "Only two players remain. The SPY wins!",
         )
         return
 
-    cancel_task(room.get("reaction_task"))
-
-    room["reaction_task"] = asyncio.create_task(
-        restart_round_after_reaction(
-            room["room_id"],
-            eliminated_player
-        )
-    )
-
-
-# =========================================================
-# WEBSOCKET
-# =========================================================
-
-@app.websocket("/ws/{room_id}/{capacity}/{mode}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    room_id: str,
-    capacity: int,
-    mode: str,
-    username: str = Query("")
-):
-    await websocket.accept()
-
-    username = clean_username(username)
-
-    if not username:
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "Please enter a valid player name."
-            }
-        )
-        await websocket.close()
-        return
-
-    if not valid_capacity(capacity):
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "Invalid player capacity."
-            }
-        )
-        await websocket.close()
-        return
-
-    if not valid_mode(mode):
-        mode = "spy"
-
-    room = rooms.get(room_id)
-
-    # If the room wasn't pre-created, create it now.
-    if room is None:
-        room = make_room(
-            room_id,
-            capacity,
-            mode
-        )
-        rooms[room_id] = room
-
-    # Validate reserved room.
-    if room["capacity"] != capacity:
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": (
-                    f"This room is configured for "
-                    f"{room['capacity']} players."
-                )
-            }
-        )
-        await websocket.close()
-        return
-
-    if room["mode"] != mode:
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "This room uses a different game mode."
-            }
-        )
-        await websocket.close()
-        return
-
-    # No late joins once the game has begun.
-    if room["state"] != "waiting":
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "This game has already started."
-            }
-        )
-        await websocket.close()
-        return
-
-    if len(room["connections"]) >= room["capacity"]:
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "Room is full!"
-            }
-        )
-        await websocket.close()
-        return
-
-    if username in room["players"] and room["players"][username].get("connected"):
-        await send_json(
-            websocket,
-            {
-                "type": "error",
-                "message": "That player name is already in this room."
-            }
-        )
-        await websocket.close()
-        return
-
-    # If a previously disconnected name is reused, reset that player.
-    room["players"][username] = {
-        "ws": websocket,
-        "ready": False,
-        "role": None,
-        "word": None,
-        "is_alive": True,
-        "connected": True,
-    }
-
-    room["connections"].add(websocket)
-    room["last_activity"] = now()
+    room["round"] += 1
+    room["state"] = "playing"
+    room["votes"] = {}
 
     await broadcast(
         room,
         {
-            "type": "chat",
-            "sender": "System",
-            "text": (
-                f"{username} joined the room "
-                f"({len(room['connections'])}/{room['capacity']})."
-            )
-        }
+            "type": "new_round",
+            "round": room["round"],
+            "category": room["category"],
+            "seconds": TURN_TIME,
+            "players": snapshot(room),
+        },
     )
 
-    await broadcast_lobby(room)
+    await asyncio.sleep(0.35)
+
+    alive = alive_names(room)
+
+    if alive:
+        await start_turn(room, alive[0])
+
+
+async def cleanup():
+    while True:
+        await asyncio.sleep(60)
+
+        cutoff = now() - ROOM_EXPIRE
+
+        for room_id, room in list(rooms.items()):
+            if (
+                not room["connections"]
+                and room["last_activity"] < cutoff
+            ):
+                for key in (
+                    "turn_task",
+                    "vote_task",
+                    "reaction_task",
+                    "category_task",
+                ):
+                    cancel(room.get(key))
+
+                rooms.pop(room_id, None)
+
+
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(cleanup())
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    return HTMLResponse(
+        (STATIC_DIR / "index.html").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+@app.get("/create_new_room")
+async def create_new_room(capacity: int = 6):
+    if not valid_capacity(capacity):
+        return {
+            "error": "Capacity must be between 4 and 8."
+        }
+
+    while True:
+        room_id = "".join(
+            random.choices(string.digits, k=4)
+        )
+
+        if room_id not in rooms:
+            rooms[room_id] = make_room(
+                room_id,
+                capacity,
+            )
+
+            return {
+                "room_id": room_id,
+                "capacity": capacity,
+            }
+
+
+@app.get("/get_random_room/{capacity}")
+async def get_random_room(capacity: int):
+    if not valid_capacity(capacity):
+        return {
+            "error": "Capacity must be between 4 and 8."
+        }
+
+    candidates = [
+        room_id
+        for room_id, room in rooms.items()
+        if (
+            room["state"] == "waiting"
+            and room["capacity"] == capacity
+            and len(connected_names(room)) < capacity
+        )
+    ]
+
+    if candidates:
+        return {
+            "room_id": candidates[0],
+            "capacity": capacity,
+        }
+
+    return await create_new_room(capacity)
+
+
+@app.websocket("/ws/{room_id}/{capacity}")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    room_id: str,
+    capacity: int,
+    username: str = Query(""),
+):
+    await websocket.accept()
+
+    username = clean_name(username)
+
+    if not username:
+        await send(
+            websocket,
+            {
+                "type": "error",
+                "message": "Please enter a player name.",
+            },
+        )
+
+        await websocket.close()
+        return
+
+    if not valid_capacity(capacity):
+        await send(
+            websocket,
+            {
+                "type": "error",
+                "message": "Invalid room capacity.",
+            },
+        )
+
+        await websocket.close()
+        return
+
+    room = rooms.get(room_id)
+
+    if room is None:
+        room = make_room(room_id, capacity)
+        rooms[room_id] = room
+
+    if room["capacity"] != capacity:
+        await send(
+            websocket,
+            {
+                "type": "error",
+                "message": "This room has a different capacity.",
+            },
+        )
+
+        await websocket.close()
+        return
+
+    if (
+        room["state"] != "waiting"
+        and username not in room["players"]
+    ):
+        await send(
+            websocket,
+            {
+                "type": "error",
+                "message": "This game has already started.",
+            },
+        )
+
+        await websocket.close()
+        return
+
+    if (
+        username in room["players"]
+        and room["players"][username].get("connected")
+    ):
+        await send(
+            websocket,
+            {
+                "type": "error",
+                "message": "That name is already in the room.",
+            },
+        )
+
+        await websocket.close()
+        return
+
+    if (
+        username not in room["players"]
+        and len(connected_names(room)) >= capacity
+    ):
+        await send(
+            websocket,
+            {
+                "type": "error",
+                "message": "Room is full.",
+            },
+        )
+
+        await websocket.close()
+        return
+
+    if username not in room["players"]:
+        room["players"][username] = {
+            "username": username,
+            "number": len(room["players"]) + 1,
+            "ws": websocket,
+            "connected": True,
+            "ready": False,
+            "alive": True,
+            "role": None,
+            "word": None,
+        }
+
+    else:
+        player = room["players"][username]
+
+        player.update(
+            ws=websocket,
+            connected=True,
+            ready=False,
+        )
+
+    room["connections"].add(websocket)
+    room["last_activity"] = now()
+
+    await send(
+        websocket,
+        {
+            "type": "connected",
+            "room": room_id,
+            "capacity": room["capacity"],
+            "username": username,
+            "players": snapshot(room),
+            "state": room["state"],
+        },
+    )
+
+    await lobby(room)
 
     try:
         while True:
-            raw = await websocket.receive_text()
-
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-
-            if not isinstance(data, dict):
-                continue
+            data = json.loads(
+                await websocket.receive_text()
+            )
 
             action = data.get("action")
-
             room["last_activity"] = now()
 
-            # ---------------------------------------------
-            # READY
-            # ---------------------------------------------
-            if action == "set_ready":
+            if (
+                action == "set_ready"
+                and room["state"] == "waiting"
+            ):
+                room["players"][username]["ready"] = bool(
+                    data.get("ready")
+                )
 
-                if room["state"] != "waiting":
+                await lobby(room)
+
+                users = connected_names(room)
+
+                if (
+                    len(users) == room["capacity"]
+                    and all(
+                        room["players"][n].get("ready")
+                        for n in users
+                    )
+                ):
+                    await start_category(room)
+
+            elif (
+                action == "category_vote"
+                and room["state"] == "category"
+            ):
+                category = str(
+                    data.get("category", "")
+                )
+
+                if category not in CATEGORIES:
                     continue
 
-                ready = bool(data.get("ready"))
+                room["category_votes"][username] = category
 
-                room["players"][username]["ready"] = ready
-
-                await broadcast_lobby(room)
-
-                if all_players_ready(room):
-                    await start_game(room)
-
-            # ---------------------------------------------
-            # CHAT
-            # ---------------------------------------------
-            elif action == "chat":
-
-                text = str(data.get("text", "")).strip()
-
-                if not text:
-                    continue
-
-                text = text[:300]
+                counts = {
+                    category_name: sum(
+                        vote == category_name
+                        for vote in room["category_votes"].values()
+                    )
+                    for category_name in CATEGORIES
+                }
 
                 await broadcast(
                     room,
                     {
-                        "type": "chat",
-                        "sender": username,
-                        "text": text
-                    }
+                        "type": "category_vote_update",
+                        "counts": counts,
+                    },
                 )
 
-            # ---------------------------------------------
-            # REACTION
-            # ---------------------------------------------
-            elif action == "reaction":
+                if (
+                    len(room["category_votes"])
+                    == len(connected_names(room))
+                ):
+                    cancel(room.get("category_task"))
+                    room["category_task"] = None
 
-                emoji = str(data.get("emoji", "")).strip()
+                    await category_worker(
+                        room["room_id"]
+                    )
 
-                if not emoji:
-                    continue
+            elif (
+                action == "end_turn"
+                and room["state"] == "playing"
+                and room["speaker"] == username
+            ):
+                await advance_turn(room, username)
 
-                emoji = emoji[:12]
+            elif (
+                action == "cast_vote"
+                and room["state"] == "voting"
+            ):
+                player = room["players"].get(username)
 
-                await broadcast(
-                    room,
-                    {
-                        "type": "reaction",
-                        "sender": username,
-                        "emoji": emoji
-                    }
-                )
-
-            # ---------------------------------------------
-            # END TURN
-            # ---------------------------------------------
-            elif action == "end_turn":
-
-                if room["state"] != "playing":
-                    continue
-
-                if room.get("current_speaker") != username:
-                    continue
-
-                if not room["players"][username].get("is_alive"):
-                    continue
-
-                await broadcast(
-                    room,
-                    {
-                        "type": "turn_ended",
-                        "player": username
-                    }
-                )
-
-                await advance_turn(
-                    room,
-                    username,
-                    automatic=False
-                )
-
-            # ---------------------------------------------
-            # VOTE
-            # ---------------------------------------------
-            elif action == "cast_vote":
-
-                if room["state"] != "voting":
-                    continue
-
-                player_info = room["players"].get(username)
-
-                if not player_info:
-                    continue
-
-                if not player_info.get("is_alive"):
+                if not player or not player.get("alive"):
                     continue
 
                 if username in room["votes"]:
-                    await send_json(
+                    await send(
                         websocket,
                         {
                             "type": "vote_error",
-                            "message": "You already voted."
-                        }
+                            "message": "You already voted.",
+                        },
                     )
+
                     continue
 
-                candidate = clean_username(
-                    str(data.get("vote", ""))
+                target = clean_name(
+                    data.get("vote", "")
                 )
 
-                alive = alive_connected_usernames(room)
+                alive = alive_names(room)
 
-                if candidate not in alive:
+                if target not in alive or target == username:
                     continue
 
-                if candidate == username:
-                    await send_json(
-                        websocket,
-                        {
-                            "type": "vote_error",
-                            "message": "You cannot vote for yourself."
-                        }
-                    )
-                    continue
-
-                room["votes"][username] = candidate
+                room["votes"][username] = target
 
                 await broadcast(
                     room,
                     {
                         "type": "vote_update",
-                        "voter": username,
                         "count": len(room["votes"]),
-                        "total": len(alive)
-                    }
+                        "total": len(alive),
+                    },
                 )
 
-                # Every alive player has voted.
-                alive_voters = [
-                    player
-                    for player in alive
-                    if player in room["votes"]
-                ]
-
-                if len(alive_voters) == len(alive):
+                if all(
+                    name in room["votes"]
+                    for name in alive
+                ):
                     await calculate_votes(room)
 
-            # ---------------------------------------------
-            # PING
-            # ---------------------------------------------
+            elif action == "chat":
+                text = str(
+                    data.get("text", "")
+                )[:300].strip()
+
+                if text:
+                    await broadcast(
+                        room,
+                        {
+                            "type": "chat",
+                            "sender": username,
+                            "text": text,
+                        },
+                    )
+
+            elif action == "reaction":
+                emoji = str(
+                    data.get("emoji", "")
+                )[:12]
+
+                if emoji:
+                    await broadcast(
+                        room,
+                        {
+                            "type": "reaction",
+                            "sender": username,
+                            "emoji": emoji,
+                        },
+                    )
+
             elif action == "ping":
-                await send_json(
+                await send(
                     websocket,
-                    {"type": "pong"}
+                    {"type": "pong"},
                 )
 
-    except WebSocketDisconnect:
-        pass
+            # Native WebRTC signaling.
+            elif action in (
+                "rtc_offer",
+                "rtc_answer",
+                "rtc_ice",
+            ):
+                target = clean_name(
+                    data.get("target", "")
+                )
 
-    except Exception:
+                if (
+                    target in room["players"]
+                    and room["players"][target].get("connected")
+                ):
+                    await to_player(
+                        room,
+                        target,
+                        {
+                            "type": "rtc_signal",
+                            "from": username,
+                            "signal": data.get("signal"),
+                            "signal_type": action,
+                        },
+                    )
+
+    except (
+        WebSocketDisconnect,
+        Exception,
+    ):
         pass
 
     finally:
-        # ---------------------------------------------
-        # DISCONNECT
-        # ---------------------------------------------
-        if websocket in room["connections"]:
-            room["connections"].discard(websocket)
+        room["connections"].discard(websocket)
 
         player = room["players"].get(username)
 
         if player:
-            player["connected"] = False
-            player["ws"] = None
-            player["ready"] = False
-
-            if room["state"] == "waiting":
-                # When roster changes before game start,
-                # everybody must ready again.
-                for p_name in connected_usernames(room):
-                    room["players"][p_name]["ready"] = False
-
-            elif player.get("is_alive"):
-                player["is_alive"] = False
-
-                if username in room["alive_list"]:
-                    room["alive_list"].remove(username)
-
-                room["votes"].pop(username, None)
+            player.update(
+                connected=False,
+                ws=None,
+                ready=False,
+            )
 
         room["last_activity"] = now()
 
-        # If no one is left, remove room.
-        if len(room["connections"]) == 0:
-            cancel_task(room.get("turn_task"))
-            cancel_task(room.get("reaction_task"))
-            rooms.pop(room_id, None)
-            return
-
-        # Notify everybody.
-        await broadcast(
-            room,
-            {
-                "type": "chat",
-                "sender": "System",
-                "text": f"{username} left the room."
-            }
-        )
-
-        # If waiting, simply update lobby.
         if room["state"] == "waiting":
-            await broadcast_lobby(room)
-            return
+            for name in connected_names(room):
+                room["players"][name]["ready"] = False
 
-        # Check whether disconnect ended game.
-        game_finished = await check_win_after_disconnect(
-            room,
-            username
-        )
-
-        if game_finished:
-            return
-
-        # If the disconnected person was speaking,
-        # continue with next alive player.
-        if (
-            room["state"] == "playing"
-            and room.get("current_speaker") == username
-        ):
-            await advance_turn(
-                room,
-                username,
-                automatic=False
-            )
-
-        elif room["state"] == "voting":
-            alive = alive_connected_usernames(room)
-
-            if not alive:
-                return
-
-            # Remove any votes whose voter is no longer alive.
-            room["votes"] = {
-                voter: candidate
-                for voter, candidate in room["votes"].items()
-                if voter in alive
-            }
-
-            if len(room["votes"]) == len(alive):
-                await calculate_votes(room)
-
-
-# =========================================================
-# GAME START
-# =========================================================
-
-async def start_game(room: dict[str, Any]) -> None:
-
-    if room["state"] != "waiting":
-        return
-
-    users = connected_usernames(room)
-
-    if len(users) != room["capacity"]:
-        return
-
-    if not all_players_ready(room):
-        return
-
-    pair = random.choice(WORD_PAIRS)
-    spy = random.choice(users)
-
-    room["pair"] = pair
-    room["spy_username"] = spy
-    room["alive_list"] = list(users)
-
-    random.shuffle(room["alive_list"])
-
-    room["state"] = "playing"
-    room["votes"] = {}
-    room["current_speaker"] = None
-    room["last_activity"] = now()
-
-    # Assign secret roles/words.
-    for player_name in users:
-        role = "spy" if player_name == spy else "civilian"
-
-        if role == "spy":
-            word = (
-                None
-                if room["mode"] == "wordless"
-                else pair["spy"]
-            )
-        else:
-            word = pair["civilian"]
-
-        room["players"][player_name]["role"] = role
-        room["players"][player_name]["word"] = word
-        room["players"][player_name]["is_alive"] = True
-
-    # Private role + word message to each player.
-    for player_name in users:
-
-        player = room["players"][player_name]
-
-        await send_json(
-            player["ws"],
-            {
-                "type": "game_start",
-                "role": player["role"],
-                "word": player["word"],
-                "mode": room["mode"],
-                "players": [
+            if room["connections"]:
+                await broadcast(
+                    room,
                     {
-                        "username": p,
-                        "alive": room["players"][p]["is_alive"]
-                    }
-                    for p in room["alive_list"]
-                ]
-            }
-        )
+                        "type": "chat",
+                        "sender": "System",
+                        "text": f"{username} left the room.",
+                    },
+                )
 
-    await broadcast(
-        room,
-        {
-            "type": "chat",
-            "sender": "System",
-            "text": "Everyone is ready! Game started."
-        }
-    )
+                await lobby(room)
 
-    await broadcast_lobby(room)
+        elif player and player.get("alive"):
+            player["alive"] = False
 
-    await asyncio.sleep(1)
+            if username in room["alive"]:
+                room["alive"].remove(username)
 
-    if room["state"] == "playing" and room["alive_list"]:
-        await start_turn(
-            room,
-            room["alive_list"][0]
-        )
+            if room["connections"]:
+                await broadcast(
+                    room,
+                    {
+                        "type": "chat",
+                        "sender": "System",
+                        "text": f"{username} left the game.",
+                    },
+                )
+
+                if username == room.get("spy"):
+                    await finish_game(
+                        room,
+                        "civilians",
+                        f"{username} was the SPY and left the room. "
+                        "Civilians win!",
+                    )
+
+                elif (
+                    len(alive_names(room)) <= 2
+                    and room["state"]
+                    in (
+                        "playing",
+                        "voting",
+                        "reaction",
+                    )
+                ):
+                    await finish_game(
+                        room,
+                        "spy",
+                        "Only two players remain. "
+                        "The SPY wins!",
+                    )
+
+                else:
+                    await lobby(room)
+
+        if not room["connections"]:
+            for key in (
+                "turn_task",
+                "vote_task",
+                "reaction_task",
+                "category_task",
+            ):
+                cancel(room.get(key))
+
+            rooms.pop(room_id, None)
