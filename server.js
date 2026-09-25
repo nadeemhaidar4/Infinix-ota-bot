@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
 const INSPECT_TIMEOUT = 30000; 
-const DOWNLOAD_TIMEOUT = 300000; // FIX: Badha kar 5 minute kar diya hai taki download fail na ho
+const DOWNLOAD_TIMEOUT = 300000; // 5 mins
 const MAX_REDIRECTS = 4;
 
 const MAX_ACTIVE_PER_IP = 3;
@@ -36,8 +36,6 @@ const ALLOWED_MIME = new Set([
 
 const rateMap = new Map();
 const activeMap = new Map();
-
-// FIX: Naya cache system banaya hai taki double-loading na ho
 const extractionCache = new Map();
 
 app.use(express.json({ limit: "100kb" }));
@@ -116,23 +114,27 @@ function releaseDownload(ip) {
   else activeMap.set(ip, count - 1);
 }
 
+// FIX 2: Android File Manager ke liye completely strict filename banaya hai
 function filenameFromUrl(url, contentType = "", customTitle = null) {
+  let ext = contentType.includes("video") ? ".mp4" : contentType.includes("audio") ? ".mp3" : ".mp4";
+  
   if (customTitle) {
-      let safeTitle = customTitle.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 50);
-      let ext = contentType.includes("video") ? ".mp4" : contentType.includes("audio") ? ".mp3" : ".mp4";
+      let safeTitle = customTitle.replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").slice(0, 40);
+      if (safeTitle.endsWith("_")) safeTitle = safeTitle.slice(0, -1);
+      if (!safeTitle) safeTitle = "Media";
       return `QuickSave_${safeTitle}${ext}`;
   }
+  
   let name = "";
   try {
     name = decodeURIComponent(path.basename(new URL(url).pathname));
   } catch {}
   name = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  
   if (!name || name === "." || name.length < 2) {
-    if (contentType.startsWith("video/")) return "quicksave-video.mp4";
-    if (contentType.startsWith("audio/")) return "quicksave-audio.mp3";
-    return "quicksave-media";
+    return `QuickSave_Media${ext}`;
   }
-  return name.slice(0, 180);
+  return name.slice(0, 50);
 }
 
 function getContentType(response) {
@@ -149,6 +151,7 @@ function isSocialMediaUrl(urlStr) {
     }
 }
 
+// FIX 1: Video ke URL ke sath uske bypass "headers" bhi fetch kiye gaye hain
 async function extractDirectVideoUrl(url) {
     try {
         const output = await youtubedl(url, {
@@ -158,18 +161,24 @@ async function extractDirectVideoUrl(url) {
             format: "b" 
         });
 
-        if (!output || (!output.url && !output.requested_formats)) {
-            throw new Error("Video file not found in post.");
-        }
+        if (!output) throw new Error("Video file not found in post.");
 
         let directUrl = output.url;
-        if (!directUrl && output.requested_formats) {
+        let headers = output.http_headers || {}; // Ye headers ab Instagram ki blocking bypass karenge
+
+        if (!directUrl && output.requested_formats && output.requested_formats.length > 0) {
             directUrl = output.requested_formats[0].url;
+            if (output.requested_formats[0].http_headers) {
+                headers = output.requested_formats[0].http_headers;
+            }
         }
+
+        if (!directUrl) throw new Error("Could not extract media stream.");
 
         return {
             url: directUrl,
-            title: output.title || "SocialMediaVideo"
+            title: output.title || "Video",
+            headers: headers
         };
     } catch (error) {
         console.error("Extractor error:", error.message);
@@ -180,14 +189,17 @@ async function extractDirectVideoUrl(url) {
 async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   if (redirectCount > MAX_REDIRECTS) throw new Error("Too many redirects.");
   const url = await validateUrl(initialUrl);
-  const response = await fetch(url, {
-    ...options,
-    redirect: "manual",
-    headers: {
+  
+  const mergedHeaders = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "Accept": "*/*",
       ...(options.headers || {})
-    },
+  };
+
+  const response = await fetch(url, {
+    ...options,
+    redirect: "manual",
+    headers: mergedHeaders,
     signal: options.signal
   });
 
@@ -200,7 +212,7 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   return response;
 }
 
-app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.3" }));
+app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.4" }));
 
 app.post("/api/inspect", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
@@ -211,20 +223,23 @@ app.post("/api/inspect", async (req, res) => {
     let url = await validateUrl(rawUrl);
     let targetUrl = url.toString();
     let extractedTitle = null;
+    let customHeaders = {};
   
     if (isSocialMediaUrl(targetUrl)) {
-        if (extractionCache.has(targetUrl)) {
-            const cached = extractionCache.get(targetUrl);
+        const cacheKey = targetUrl;
+        if (extractionCache.has(cacheKey)) {
+            const cached = extractionCache.get(cacheKey);
             targetUrl = cached.url;
             extractedTitle = cached.title;
+            customHeaders = cached.headers;
         } else {
             const extractedData = await extractDirectVideoUrl(targetUrl);
-            extractionCache.set(url.toString(), extractedData);
-            
-            setTimeout(() => extractionCache.delete(url.toString()), 30 * 60 * 1000);
+            extractionCache.set(cacheKey, extractedData);
+            setTimeout(() => extractionCache.delete(cacheKey), 10 * 60 * 1000);
             
             targetUrl = extractedData.url;
             extractedTitle = extractedData.title;
+            customHeaders = extractedData.headers;
         }
     }
   
@@ -234,7 +249,7 @@ app.post("/api/inspect", async (req, res) => {
     try {
       let response;
       try {
-        response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal });
+        response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal, headers: customHeaders });
       } catch {
         response = null;
       }
@@ -245,7 +260,7 @@ app.post("/api/inspect", async (req, res) => {
       if (!response || !response.ok || !contentType) {
         response = await fetchSafe(targetUrl, {
           method: "GET",
-          headers: { Range: "bytes=0-0" },
+          headers: { ...customHeaders, Range: "bytes=0-0" },
           signal: controller.signal
         });
         contentType = getContentType(response);
@@ -297,24 +312,39 @@ app.get("/api/download", async (req, res) => {
     const rawUrl = req.query.url; 
     let targetUrl = (await validateUrl(rawUrl)).toString();
     let extractedTitle = null;
+    let customHeaders = {};
 
     if (isSocialMediaUrl(targetUrl)) {
-        if (extractionCache.has(targetUrl)) {
-            const cached = extractionCache.get(targetUrl);
+        const cacheKey = targetUrl;
+        if (extractionCache.has(cacheKey)) {
+            const cached = extractionCache.get(cacheKey);
             targetUrl = cached.url;
             extractedTitle = cached.title;
+            customHeaders = cached.headers;
         } else {
             const extractedData = await extractDirectVideoUrl(targetUrl);
             targetUrl = extractedData.url;
             extractedTitle = extractedData.title;
+            customHeaders = extractedData.headers;
         }
     }
 
     const controller = new AbortController();
     const timer = setTimeout(() => { controller.abort(); }, DOWNLOAD_TIMEOUT);
 
+    // FIX 3: Agar mobile phone screen lock hone se connection drop kare, toh process ko safely kill karo.
+    req.on("close", () => {
+        controller.abort();
+        clearTimeout(timer);
+    });
+
     try {
-      const response = await fetchSafe(targetUrl, { method: "GET", signal: controller.signal });
+      const response = await fetchSafe(targetUrl, { 
+          method: "GET", 
+          signal: controller.signal, 
+          headers: customHeaders 
+      });
+      
       if (!response.ok) return res.status(400).json({ ok: false, message: `Media server returned HTTP ${response.status}.` });
 
       const contentType = getContentType(response) || "video/mp4";
@@ -328,7 +358,7 @@ app.get("/api/download", async (req, res) => {
 
       res.statusCode = 200;
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename.replace(/"/g, "")}"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Cache-Control", "no-store");
       if (contentLength) res.setHeader("Content-Length", String(contentLength));
 
