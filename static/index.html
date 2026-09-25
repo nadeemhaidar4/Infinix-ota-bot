@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Viewport lock to prevent zooming & fit screen perfectly -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
     <title>Spy Word Game</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
-    <!-- Simple, Clean, Readable Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Poppins:wght@500;700;900&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -17,53 +17,40 @@
             --panel-bg: #1e1e1e;
         }
         body {
-            background-color: var(--bg-dark);
-            font-family: 'Inter', sans-serif; 
-            color: #ffffff; 
-            margin: 0; padding: 0;
-            height: 100dvh; width: 100vw; overflow: hidden;
+            background-color: var(--bg-dark); font-family: 'Inter', sans-serif; color: #ffffff; 
+            margin: 0; padding: 0; height: 100dvh; width: 100vw; overflow: hidden;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; 
         }
         
+        /* Flexbox magic to fit inside any screen perfectly */
         .glass-panel {
             background: var(--panel-bg); 
             border-top: 3px solid var(--civ-blue); border-bottom: 3px solid var(--spy-red);
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8); border-radius: 16px;
-            width: 100%; max-width: 400px; max-height: 90vh; /* Fixed height issue */
+            width: 95%; max-width: 450px; height: 95dvh; 
             display: flex; flex-direction: column;
-            padding: 1.5rem; box-sizing: border-box;
-            z-index: 10;
+            padding: 1.2rem; box-sizing: border-box; z-index: 10;
         }
         
-        .title-text {
-            font-family: 'Poppins', sans-serif; font-weight: 900; color: #ffffff;
-            letter-spacing: 2px; text-transform: uppercase;
-        }
+        .title-text { font-family: 'Poppins', sans-serif; font-weight: 900; color: #ffffff; letter-spacing: 2px; text-transform: uppercase; }
         .title-spy { color: var(--spy-red); }
 
         .avatar {
-            width: 70px; height: 70px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            font-size: 2rem; background: #2c2c2c; border: 3px solid; transition: transform 0.2s;
-            flex-shrink: 0;
+            width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 1.8rem; background: #2c2c2c; border: 2px solid; transition: transform 0.2s; flex-shrink: 0;
         }
-        .avatar.civ { border-color: var(--civ-blue); }
-        .avatar.civ::after { content: "🕵️‍♂️"; } 
-        .avatar.spy { border-color: var(--spy-red); }
-        .avatar.spy::after { content: "🥷"; }
+        .avatar.civ { border-color: var(--civ-blue); } .avatar.civ::after { content: "🕵️‍♂️"; } 
+        .avatar.spy { border-color: var(--spy-red); } .avatar.spy::after { content: "🥷"; }
         
         .neo-input {
             background: #2c2c2c; border: 1px solid #444; color: #fff;
             font-family: 'Inter', sans-serif; font-weight: 600; transition: all 0.2s; 
-            user-select: auto; -webkit-user-select: auto;
-            width: 100%; box-sizing: border-box;
+            user-select: auto; -webkit-user-select: auto; width: 100%; box-sizing: border-box;
         }
         .neo-input:focus { border-color: var(--civ-blue); outline: none;}
         
-        .btn {
-            font-family: 'Poppins', sans-serif; font-weight: 700; border: none; transition: transform 0.1s;
-            width: 100%; box-sizing: border-box;
-        }
+        .btn { font-family: 'Poppins', sans-serif; font-weight: 700; border: none; transition: transform 0.1s; width: 100%; box-sizing: border-box; cursor: pointer;}
         .btn:active { transform: scale(0.95); }
         .btn-action { background: var(--spy-red); color: white; }
         .btn-blue { background: var(--civ-blue); color: white;}
@@ -73,114 +60,128 @@
         .secret-header { background: #2c2c2c; border: 1px solid #444; }
         #my-word { font-family: 'Poppins', sans-serif; color: var(--neon-green); font-weight: 900;}
         
-        .chat-container { background: #000; border: 1px solid #333; border-radius: 8px; flex: 1; min-height: 100px; display: flex; flex-direction: column; overflow: hidden; }
+        /* Chat box strictly takes remaining space without pushing limits */
+        .chat-container { background: #000; border: 1px solid #333; border-radius: 8px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
         .chat-header { background: #222; padding: 6px 10px; border-radius: 8px 8px 0 0; display: flex; gap: 6px; flex-shrink: 0;}
-        .dot { width: 12px; height: 12px; border-radius: 50%; } .dot-red { background: #ff5f56; } .dot-yel { background: #ffbd2e; } .dot-grn { background: #27c93f; }
         
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
         
         #vote-area { background: #2c1a1a; border: 1px solid var(--spy-red); }
-
-        /* Fixes the button overlap */
-        .join-elements { display: flex; flex-direction: column; gap: 10px; width: 100%;}
     </style>
 </head>
-<body class="relative px-2">
+<body>
 
-    <!-- Active players display at very top, detached from main box -->
-    <div class="absolute top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-green-500 px-4 py-2 rounded-full text-xs font-bold text-green-400 flex items-center gap-2 z-50 shadow-md whitespace-nowrap">
-        <div class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+    <!-- Top floating online badge -->
+    <div class="absolute top-2 sm:top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-green-500 px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-bold text-green-400 flex items-center gap-2 z-50 shadow-md whitespace-nowrap">
+        <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
         PLAYERS ONLINE: <span id="active-users-count">0</span>
     </div>
 
     <!-- Main Game Panel -->
-    <div class="glass-panel">
+    <div class="glass-panel mt-6 sm:mt-8">
         
         <!-- Header -->
         <div class="shrink-0 mb-4">
             <h1 class="text-4xl text-center title-text">WORD <span class="title-spy">SPY</span></h1>
-            <p class="text-center text-gray-400 text-xs font-semibold uppercase mt-1">Find the Imposter</p>
+            <p class="text-center text-gray-400 text-[10px] font-semibold uppercase mt-0.5">Find the Imposter</p>
         </div>
         
-        <!-- Join Section Layout Fix -->
-        <div id="join-section" class="flex flex-col flex-1 overflow-y-auto">
-            <div class="flex justify-center gap-6 mb-5 shrink-0">
+        <!-- Join Section -->
+        <div id="join-section" class="flex flex-col flex-1 overflow-y-auto w-full">
+            <div class="flex justify-center items-center gap-6 mb-6 shrink-0">
                 <div class="avatar civ" title="Civilian"></div>
-                <div class="text-2xl font-black text-gray-500 mt-4">VS</div>
+                <div class="text-xl font-black text-gray-500">VS</div>
                 <div class="avatar spy" title="Spy"></div>
             </div>
 
-            <div class="join-elements shrink-0 pb-2">
-                <input type="text" id="username" placeholder="Enter Player Name" class="p-3.5 rounded-lg neo-input text-lg text-center">
+            <div class="flex flex-col gap-3 shrink-0 pb-2 w-full">
+                <input type="text" id="username" placeholder="Enter Player Name" class="p-3 rounded-lg neo-input text-md text-center uppercase tracking-wide">
                 
-                <select id="capacity-select" class="p-3.5 rounded-lg neo-input text-md text-center">
+                <select id="capacity-select" class="p-3 rounded-lg neo-input text-sm text-center font-bold">
                     <option value="4">4 Players Mode</option>
                     <option value="6">6 Players Mode</option>
                 </select>
                 
-                <button onclick="joinRoom('random')" class="btn btn-action p-3.5 rounded-lg text-sm uppercase tracking-wider mt-2">Play Now (Auto Match)</button>
-                <button onclick="joinRoom('create')" class="btn btn-blue p-3.5 rounded-lg text-sm uppercase tracking-wider">Create Private Room</button>
-                <button onclick="joinRoom('join')" class="btn btn-dark p-3.5 rounded-lg text-sm uppercase tracking-wider">Join with Code</button>
+                <button onclick="joinRoom('random')" class="btn btn-action p-3 rounded-lg text-sm uppercase tracking-wider mt-2 shadow-lg shadow-red-500/30">Play Now (Auto Match)</button>
+                <button onclick="joinRoom('create')" class="btn btn-blue p-3 rounded-lg text-sm uppercase tracking-wider shadow-lg shadow-blue-500/30">Create Private Room</button>
+                <button onclick="joinRoom('join')" class="btn btn-dark p-3 rounded-lg text-sm uppercase tracking-wider">Join with Code</button>
             </div>
         </div>
 
         <!-- Game Section -->
         <div id="game-section" class="hidden flex-col flex-1 min-h-0 w-full">
             
-            <div class="flex justify-between items-center mb-3 p-3 rounded-xl secret-header shrink-0">
+            <div class="flex justify-between items-center mb-3 p-3 rounded-xl secret-header shrink-0 shadow-inner">
                 <div>
-                    <p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Your Secret Word <span id="current-room-display" class="ml-1 text-yellow-500"></span></p>
-                    <p id="my-word" class="text-xl font-black">WAITING...</p>
+                    <p class="text-[9px] text-gray-400 uppercase font-bold mb-0.5">Your Secret Word <span id="current-room-display" class="ml-1 text-yellow-500"></span></p>
+                    <p id="my-word" class="text-lg font-black tracking-widest">WAITING...</p>
                 </div>
                 
                 <div class="flex flex-col gap-2 items-end">
-                    <div id="mic-status" onclick="toggleMic()" class="cursor-pointer bg-green-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2">
+                    <div id="mic-status" onclick="toggleMic()" class="cursor-pointer bg-green-600 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-md">
                         <div class="w-2 h-2 rounded-full bg-white animate-pulse"></div>
                         <span id="mic-text">MIC ON</span>
                     </div>
-                    <button onclick="leaveGame()" class="btn-exit px-3 py-1 rounded-lg text-[10px] font-bold">LEAVE</button>
+                    <button onclick="leaveGame()" class="btn-exit px-3 py-1 rounded-lg text-[9px] font-bold tracking-widest">LEAVE</button>
                 </div>
             </div>
 
-            <div class="bg-gray-800 rounded-lg p-2 mb-3 border border-gray-700 shrink-0">
-                <p id="game-alert" class="text-yellow-400 font-bold text-center text-sm">Waiting for other players...</p>
+            <div class="bg-gray-800 rounded-lg p-2 mb-2 border border-gray-700 shrink-0">
+                <p id="game-alert" class="text-yellow-400 font-bold text-center text-xs animate-pulse tracking-wide">Waiting for other players...</p>
             </div>
 
-            <div id="turn-timer-container" class="hidden mb-3 shrink-0">
-                <div class="w-full bg-gray-700 rounded-full h-3 relative overflow-hidden">
-                    <div id="turn-progress-bar" class="bg-yellow-400 h-full w-full transition-all duration-1000 ease-linear"></div>
+            <!-- List of active players in match -->
+            <div id="players-list-container" class="hidden shrink-0 mb-2 w-full flex flex-wrap gap-1 justify-center" id="active-players-list">
+                <!-- Javascript will populate this -->
+            </div>
+
+            <!-- Timer / Mic Pass Button combined -->
+            <div id="turn-timer-container" class="hidden mb-2 shrink-0 border border-gray-700 p-2 rounded-lg bg-gray-900 relative">
+                <div class="flex justify-between items-center mb-1">
+                    <p id="turn-countdown" class="text-green-400 font-bold text-[10px] tracking-widest">YOUR TURN TO SPEAK: 30s</p>
+                    <button onclick="endMyTurn()" class="bg-blue-600 text-white text-[9px] px-2 py-1 rounded font-bold uppercase hover:bg-blue-500">Pass Mic</button>
                 </div>
-                <p id="turn-countdown" class="text-center text-yellow-400 font-bold mt-1.5 text-xs">YOUR TURN: 15s</p>
+                <div class="w-full bg-gray-700 rounded-full h-1.5 relative overflow-hidden">
+                    <div id="turn-progress-bar" class="bg-green-500 h-full w-full transition-all duration-1000 ease-linear"></div>
+                </div>
             </div>
 
-            <div id="vote-area" class="hidden mb-3 p-3 rounded-xl text-center shrink-0">
-                <p class="text-red-500 font-bold text-sm mb-2 uppercase">Who is the Spy? Vote Now!</p>
+            <div id="vote-area" class="hidden mb-2 p-3 rounded-xl text-center shrink-0">
+                <p class="text-red-500 font-bold text-xs mb-2 uppercase tracking-widest">Who is the Spy? Vote Now!</p>
                 <div id="vote-buttons" class="grid grid-cols-2 gap-2"></div>
             </div>
 
-            <div class="chat-container mb-3">
+            <!-- Chat -->
+            <div class="chat-container mb-2">
                 <div class="chat-header">
-                    <div class="dot dot-red"></div>
-                    <div class="dot dot-yel"></div>
-                    <div class="dot dot-grn"></div>
+                    <div class="dot" style="background:#ff5f56"></div>
+                    <div class="dot" style="background:#ffbd2e"></div>
+                    <div class="dot" style="background:#27c93f"></div>
                 </div>
-                <div id="messages" class="flex-1 overflow-y-auto p-3 text-left text-sm flex flex-col gap-1.5 font-medium"></div>
+                <div id="messages" class="flex-1 overflow-y-auto p-2 text-left text-xs flex flex-col gap-1 font-medium"></div>
             </div>
             
             <div class="flex gap-2 shrink-0">
-                <input type="text" id="chat-input" placeholder="Type a message..." class="flex-1 p-2 rounded-lg neo-input text-sm">
-                <button onclick="sendChat()" class="btn btn-blue px-4 rounded-lg text-sm">SEND</button>
+                <input type="text" id="chat-input" placeholder="Type a message..." class="flex-1 p-2 rounded-lg neo-input text-xs">
+                <button onclick="sendChat()" class="btn btn-blue px-4 rounded-lg text-xs tracking-wider">SEND</button>
             </div>
         </div>
     </div>
     
-    <!-- Audio Elements for Sound Effects -->
+    <!-- Realistic Audio Elements -->
+    <!-- Click -->
     <audio id="sfx-click" src="https://actions.google.com/sounds/v1/ui/button_click.ogg" preload="auto"></audio>
+    <!-- Game Start/Round -->
     <audio id="sfx-start" src="https://actions.google.com/sounds/v1/science_fiction/computer_beeps.ogg" preload="auto"></audio>
-    <audio id="sfx-turn" src="https://actions.google.com/sounds/v1/ui/pop_up_sound.ogg" preload="auto"></audio>
+    <!-- Your turn (Walkie talkie beep) -->
+    <audio id="sfx-turn" src="https://actions.google.com/sounds/v1/communication/walkie_talkie_squelch.ogg" preload="auto"></audio>
+    <!-- Time running out (Warning) -->
     <audio id="sfx-timeout" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
+    <!-- Spy Caught (Win) -->
     <audio id="sfx-spy-caught" src="https://actions.google.com/sounds/v1/crowds/crowd_cheering.ogg" preload="auto"></audio>
+    <!-- Civilian Dead (Error/Alarm) -->
     <audio id="sfx-civ-dead" src="https://actions.google.com/sounds/v1/alarms/radiation_meter_fast.ogg" preload="auto"></audio>
+    <!-- Game Over (Spy Wins / Sad) -->
     <audio id="sfx-game-over" src="https://actions.google.com/sounds/v1/science_fiction/power_down.ogg" preload="auto"></audio>
 
     <script src="/static/script.js"></script>
