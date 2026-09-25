@@ -1,1554 +1,1281 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width,
-                 initial-scale=1.0,
-                 maximum-scale=1.0,
-                 user-scalable=no,
-                 viewport-fit=cover"
-    >
-
-    <title>Who Is The Spy</title>
-
-    <link
-        href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@500;600;700;800;900&display=swap"
-        rel="stylesheet"
-    >
-
-    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
-
-    <style>
-        :root {
-            --blue-1: #2da4f7;
-            --blue-2: #1166bf;
-            --blue-3: #0b438f;
-            --panel: rgba(10, 68, 138, 0.72);
-            --panel-dark: rgba(4, 38, 88, 0.76);
-            --cyan: #4cc9ff;
-            --orange: #ffae2b;
-            --yellow: #ffd44e;
-            --green: #35d56a;
-            --red: #ff4d56;
-            --white: #ffffff;
-        }
-
-        * {
-            box-sizing: border-box;
-        }
-
-        html,
-        body {
-            margin: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }
-
-        body {
-            font-family: "Nunito", sans-serif;
-            color: white;
-            background:
-                radial-gradient(
-                    circle at 50% -10%,
-                    #4ebeff 0,
-                    #1878d4 32%,
-                    #0c4794 72%,
-                    #07356f 100%
-                );
-        }
-
-        button,
-        input,
-        select {
-            font: inherit;
-        }
-
-        button {
-            border: 0;
-        }
-
-        .hidden {
-            display: none !important;
-        }
-
-        #app {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            justify-content: center;
-        }
-
-        .app-shell {
-            width: 100%;
-            max-width: 470px;
-            height: 100dvh;
-            min-height: 100dvh;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .screen {
-            width: 100%;
-            height: 100%;
-            padding: 14px;
-        }
-
-        /* =====================================================
-           LOBBY
-           ===================================================== */
-
-        #lobby-screen {
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-
-        .game-logo-wrap {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-
-        .game-logo {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 14px 20px;
-            border-radius: 18px;
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(58, 190, 255, 0.82),
-                    rgba(11, 99, 185, 0.86)
-                );
-            border: 3px solid rgba(137, 224, 255, 0.75);
-            box-shadow:
-                0 8px 25px rgba(0, 0, 0, .24),
-                inset 0 3px 8px rgba(255,255,255,.3);
-        }
-
-        .logo-who {
-            font-family: "Fredoka", sans-serif;
-            font-size: 29px;
-            line-height: 1;
-            font-weight: 700;
-            letter-spacing: 1px;
-            text-shadow:
-                2px 2px 0 #064485,
-                -1px -1px 0 #b8ecff;
-        }
-
-        .logo-spy {
-            font-family: "Fredoka", sans-serif;
-            font-size: 42px;
-            line-height: .8;
-            font-weight: 700;
-            color: #ffc235;
-            letter-spacing: 1px;
-            text-shadow:
-                2px 3px 0 #a34600,
-                -1px -1px 0 #fff0a8;
-        }
-
-        .mode-title {
-            text-align: center;
-            font-size: 13px;
-            font-weight: 800;
-            opacity: .85;
-            margin-bottom: 8px;
-        }
-
-        .mode-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 13px;
-        }
-
-        .mode-card {
-            text-align: left;
-            padding: 15px;
-            border-radius: 18px;
-            color: white;
-            cursor: pointer;
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(83, 199, 255, .93),
-                    rgba(16, 119, 206, .88)
-                );
-            border: 2px solid rgba(255,255,255,.28);
-            box-shadow:
-                0 6px 0 rgba(0,0,0,.18),
-                inset 0 2px 5px rgba(255,255,255,.3);
-            transition: .15s ease;
-        }
-
-        .mode-card.selected {
-            transform: translateY(-2px);
-            background:
-                linear-gradient(
-                    180deg,
-                    #ffd74c,
-                    #f59d14
-                );
-            border-color: #fff6a2;
-        }
-
-        .mode-card .mode-icon {
-            font-size: 27px;
-        }
-
-        .mode-card strong {
-            display: block;
-            font-family: "Fredoka", sans-serif;
-            font-size: 20px;
-            margin-top: 5px;
-        }
-
-        .mode-card small {
-            display: block;
-            margin-top: 5px;
-            font-weight: 800;
-            opacity: .9;
-            line-height: 1.25;
-        }
-
-        .lobby-box {
-            background: rgba(8, 60, 122, .60);
-            border: 1px solid rgba(255,255,255,.14);
-            border-radius: 22px;
-            padding: 14px;
-            box-shadow:
-                inset 0 1px rgba(255,255,255,.06),
-                0 10px 25px rgba(0,0,0,.12);
-        }
-
-        .input-row {
-            display: grid;
-            grid-template-columns: 1fr 145px;
-            gap: 9px;
-        }
-
-        .field {
-            width: 100%;
-            height: 48px;
-            border-radius: 15px;
-            background: rgba(255,255,255,.96);
-            border: 2px solid rgba(73,190,255,.65);
-            outline: none;
-            padding: 0 14px;
-            font-size: 16px;
-            font-weight: 800;
-            color: #19304c;
-            box-shadow: inset 0 3px 5px rgba(0,0,0,.08);
-        }
-
-        .field:focus {
-            border-color: #ffd44c;
-        }
-
-        .main-buttons {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 11px;
-        }
-
-        .big-btn {
-            min-height: 63px;
-            border-radius: 17px;
-            color: white;
-            cursor: pointer;
-            font-weight: 900;
-            font-size: 16px;
-            border: 2px solid rgba(255,255,255,.2);
-            box-shadow:
-                0 6px 0 rgba(0,0,0,.20),
-                inset 0 2px 6px rgba(255,255,255,.32);
-            text-shadow: 0 1px 2px rgba(0,0,0,.45);
-        }
-
-        .big-btn:active {
-            transform: translateY(5px);
-            box-shadow: 0 1px 0 rgba(0,0,0,.2);
-        }
-
-        .btn-yellow {
-            background: linear-gradient(180deg, #ffd953, #f29b17);
-        }
-
-        .btn-cyan {
-            background: linear-gradient(180deg, #61d7ff, #158ad8);
-        }
-
-        .btn-blue {
-            background: linear-gradient(180deg, #35aef5, #1261c1);
-        }
-
-        .full-btn {
-            width: 100%;
-            margin-top: 10px;
-            min-height: 50px;
-            border-radius: 15px;
-            background:
-                linear-gradient(180deg, #2a9eed, #0e5ab6);
-        }
-
-        .online-counter {
-            margin-top: 14px;
-            text-align: center;
-            font-weight: 900;
-            font-size: 13px;
-            opacity: .9;
-        }
-
-        .loading-text {
-            min-height: 22px;
-            text-align: center;
-            margin-top: 8px;
-            color: #ffe268;
-            font-size: 13px;
-            font-weight: 900;
-        }
-
-        /* =====================================================
-           GAME SCREEN
-           ===================================================== */
-
-        #game-screen {
-            display: flex;
-            flex-direction: column;
-            padding: 10px;
-        }
-
-        .game-board {
-            width: 100%;
-            height: 100%;
-            border-radius: 23px;
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(22, 108, 194, .80),
-                    rgba(8, 67, 139, .96)
-                );
-            border: 1px solid rgba(255,255,255,.12);
-            box-shadow: 0 14px 35px rgba(0,0,0,.18);
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .topbar {
-            padding: 10px 10px 8px;
-            display: grid;
-            grid-template-columns: 44px 1fr 44px;
-            align-items: center;
-            gap: 8px;
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(47, 166, 238, .96),
-                    rgba(20, 102, 188, .92)
-                );
-            border-bottom: 1px solid rgba(255,255,255,.15);
-        }
-
-        .icon-btn {
-            width: 42px;
-            height: 42px;
-            border-radius: 13px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: white;
-            cursor: pointer;
-            background: rgba(255,255,255,.13);
-            border: 1px solid rgba(255,255,255,.18);
-        }
-
-        .room-heading {
-            min-width: 0;
-            text-align: center;
-        }
-
-        .room-name {
-            font-family: "Fredoka", sans-serif;
-            font-size: 19px;
-            line-height: 1.05;
-        }
-
-        .room-status {
-            font-size: 11px;
-            font-weight: 900;
-            opacity: .88;
-            margin-top: 2px;
-        }
-
-        .secret-banner {
-            margin: 9px 12px 0;
-            padding: 12px;
-            border-radius: 15px;
-            text-align: center;
-            background: rgba(0,0,0,.23);
-            border: 1px dashed rgba(103, 206, 255, .75);
-        }
-
-        .secret-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            font-weight: 900;
-            opacity: .72;
-        }
-
-        .secret-value {
-            font-family: "Fredoka", sans-serif;
-            font-size: 29px;
-            margin-top: 4px;
-        }
-
-        .secret-role {
-            margin-top: 2px;
-            font-size: 11px;
-            font-weight: 900;
-        }
-
-        .players-wrap {
-            flex: 1;
-            min-height: 150px;
-            overflow: auto;
-            padding: 14px 12px 7px;
-        }
-
-        .players-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 14px 15px;
-            align-items: start;
-        }
-
-        .player-card {
-            position: relative;
-            min-width: 0;
-            text-align: center;
-        }
-
-        .avatar-ring {
-            width: 70px;
-            height: 70px;
-            margin: 0 auto;
-            padding: 4px;
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background:
-                linear-gradient(180deg, #dff8ff, #7eaed6);
-            box-shadow: 0 5px 12px rgba(0,0,0,.28);
-            position: relative;
-            transition: .16s ease;
-        }
-
-        .avatar-ring.ready {
-            border: 3px solid #35df75;
-            background:
-                linear-gradient(180deg, #77ef9d, #1f8e51);
-        }
-
-        .avatar-ring.speaking {
-            border: 3px solid #ffe75e;
-            background:
-                linear-gradient(180deg, #ffd54a, #ff9f13);
-            animation: speakPulse .9s infinite alternate;
-        }
-
-        .avatar-ring.dead {
-            filter: grayscale(1);
-            opacity: .45;
-        }
-
-        @keyframes speakPulse {
-            from {
-                transform: scale(1);
-                box-shadow: 0 0 4px #ffc72c;
-            }
-            to {
-                transform: scale(1.09);
-                box-shadow: 0 0 18px #ffdb3b;
-            }
-        }
-
-        .avatar-face {
-            width: 100%;
-            height: 100%;
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: "Fredoka", sans-serif;
-            font-size: 29px;
-            font-weight: 700;
-            background:
-                linear-gradient(180deg, #66798e, #37485a);
-            color: white;
-            text-shadow: 1px 2px 2px rgba(0,0,0,.4);
-        }
-
-        .number-badge {
-            position: absolute;
-            top: -5px;
-            left: -5px;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: #2a9bea;
-            border: 2px solid white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 10px;
-            font-weight: 900;
-        }
-
-        .ready-badge {
-            position: absolute;
-            right: -4px;
-            bottom: -4px;
-            width: 23px;
-            height: 23px;
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #2cd568;
-            border: 2px solid white;
-            font-size: 11px;
-        }
-
-        .dead-badge {
-            position: absolute;
-            right: -5px;
-            bottom: -5px;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #222;
-            border: 2px solid white;
-        }
-
-        .mic-badge {
-            position: absolute;
-            right: -4px;
-            bottom: -4px;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #202733;
-            border: 2px solid white;
-            font-size: 11px;
-        }
-
-        .player-name {
-            margin-top: 7px;
-            font-size: 12px;
-            font-weight: 900;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
-        }
-
-        .you-label {
-            color: #ffe15b;
-        }
-
-        .empty-card .avatar-ring {
-            background:
-                linear-gradient(
-                    180deg,
-                    rgba(255,255,255,.14),
-                    rgba(255,255,255,.07)
-                );
-            border: 2px dashed rgba(255,255,255,.20);
-            box-shadow: none;
-        }
-
-        .empty-plus {
-            font-size: 31px;
-            opacity: .7;
-        }
-
-        .action-area {
-            padding: 5px 12px 9px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .ready-btn {
-            width: 100%;
-            min-height: 54px;
-            border-radius: 17px;
-            cursor: pointer;
-            color: white;
-            font-size: 18px;
-            font-weight: 900;
-            background: linear-gradient(180deg, #ffd454, #ef9b18);
-            box-shadow:
-                0 6px 0 rgba(0,0,0,.20),
-                inset 0 2px 6px rgba(255,255,255,.35);
-        }
-
-        .ready-btn.ready-state {
-            background:
-                linear-gradient(180deg, #4ce080, #17a954);
-        }
-
-        .ready-btn.cancel-state {
-            background:
-                linear-gradient(180deg, #ffbd47, #d68012);
-        }
-
-        .alert-bar {
-            min-height: 34px;
-            border-radius: 14px;
-            padding: 7px 10px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            background: rgba(0,0,0,.23);
-            border: 1px solid rgba(255,255,255,.08);
-            font-size: 11px;
-            font-weight: 900;
-        }
-
-        .timer-wrap {
-            display: none;
-        }
-
-        .timer-wrap.show {
-            display: block;
-        }
-
-        .timer-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 5px;
-            font-size: 11px;
-            font-weight: 900;
-        }
-
-        .timer-value {
-            color: #75f69d;
-        }
-
-        .pass-btn {
-            padding: 6px 11px;
-            border-radius: 99px;
-            color: white;
-            cursor: pointer;
-            background: #1a74d0;
-            border: 1px solid rgba(255,255,255,.24);
-            font-size: 10px;
-            font-weight: 900;
-        }
-
-        .timer-bar {
-            width: 100%;
-            height: 7px;
-            border-radius: 99px;
-            background: rgba(0,0,0,.34);
-            overflow: hidden;
-        }
-
-        .timer-progress {
-            width: 100%;
-            height: 100%;
-            background: #51df78;
-            transition: width 1s linear;
-        }
-
-        .timer-progress.warning {
-            background: #ffd13c;
-        }
-
-        .timer-progress.danger {
-            background: #ff4b55;
-        }
-
-        .chat-box {
-            height: 150px;
-            margin: 0 11px;
-            border-radius: 17px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            background: rgba(4,39,86,.45);
-            border: 1px solid rgba(255,255,255,.08);
-        }
-
-        .messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px 9px;
-            font-size: 11px;
-        }
-
-        .message {
-            margin-bottom: 5px;
-            line-height: 1.25;
-            word-break: break-word;
-        }
-
-        .message .sender {
-            color: #6bd8ff;
-            font-weight: 900;
-        }
-
-        .message.system {
-            color: #ffe46b;
-            text-align: center;
-            font-size: 10px;
-            font-weight: 900;
-        }
-
-        .message.reaction {
-            text-align: center;
-            font-size: 14px;
-        }
-
-        .chat-input-row {
-            display: flex;
-            gap: 7px;
-            padding: 7px;
-            background: rgba(0,0,0,.17);
-        }
-
-        .chat-input {
-            min-width: 0;
-            flex: 1;
-            height: 36px;
-            border: 0;
-            outline: 0;
-            border-radius: 20px;
-            padding: 0 12px;
-            color: #1d3046;
-            background: rgba(255,255,255,.96);
-            font-size: 12px;
-            font-weight: 800;
-        }
-
-        .send-btn {
-            width: 37px;
-            height: 37px;
-            border-radius: 50%;
-            cursor: pointer;
-            background: #4cc9ff;
-            color: white;
-            font-size: 17px;
-        }
-
-        .bottom-bar {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 10px;
-            padding: 9px 12px 10px;
-        }
-
-        .bottom-control {
-            height: 47px;
-            border-radius: 16px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-            color: white;
-            background: rgba(255,255,255,.13);
-            border: 1px solid rgba(255,255,255,.16);
-            font-size: 21px;
-        }
-
-        .bottom-control.active {
-            background: #2ed56a;
-            box-shadow: 0 0 15px rgba(46,213,106,.4);
-        }
-
-        .bottom-control.off {
-            background: #ec4452;
-        }
-
-        /* =====================================================
-           REACTIONS
-           ===================================================== */
-
-        .reaction-panel {
-            position: absolute;
-            left: 10px;
-            right: 10px;
-            bottom: 72px;
-            padding: 10px;
-            border-radius: 18px;
-            background: rgba(8,23,52,.96);
-            border: 1px solid rgba(255,255,255,.11);
-            box-shadow: 0 12px 30px rgba(0,0,0,.35);
-            display: grid;
-            grid-template-columns: repeat(6, 1fr);
-            gap: 7px;
-            z-index: 60;
-        }
-
-        .reaction-btn {
-            height: 42px;
-            border-radius: 12px;
-            background: rgba(255,255,255,.07);
-            cursor: pointer;
-            font-size: 21px;
-        }
-
-        /* =====================================================
-           OVERLAYS
-           ===================================================== */
-
-        .overlay {
-            position: absolute;
-            inset: 0;
-            z-index: 100;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 18px;
-            background: rgba(3,16,37,.76);
-            backdrop-filter: blur(4px);
-        }
-
-        .overlay-card {
-            width: 100%;
-            max-width: 360px;
-            max-height: 90%;
-            overflow: auto;
-            border-radius: 23px;
-            padding: 20px;
-            background:
-                linear-gradient(
-                    180deg,
-                    #175eaf,
-                    #0a3a7d
-                );
-            border: 2px solid rgba(255,255,255,.15);
-            box-shadow: 0 20px 50px rgba(0,0,0,.38);
-        }
-
-        .overlay-title {
-            font-family: "Fredoka", sans-serif;
-            text-align: center;
-            font-size: 29px;
-            margin: 0 0 5px;
-        }
-
-        .overlay-subtitle {
-            text-align: center;
-            font-size: 12px;
-            font-weight: 800;
-            opacity: .82;
-            margin-bottom: 16px;
-        }
-
-        .vote-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-
-        .vote-btn {
-            min-height: 64px;
-            border-radius: 16px;
-            cursor: pointer;
-            color: white;
-            background:
-                linear-gradient(
-                    180deg,
-                    #36a9ef,
-                    #125bb5
-                );
-            border: 2px solid rgba(255,255,255,.16);
-            box-shadow: 0 5px 0 rgba(0,0,0,.17);
-            font-size: 13px;
-            font-weight: 900;
-        }
-
-        .vote-btn:active {
-            transform: translateY(4px);
-            box-shadow: 0 1px 0 rgba(0,0,0,.17);
-        }
-
-        .menu-card {
-            position: absolute;
-            top: 61px;
-            left: 8px;
-            width: 175px;
-            z-index: 80;
-            border-radius: 16px;
-            overflow: hidden;
-            background: white;
-            color: #1f2a38;
-            box-shadow: 0 15px 35px rgba(0,0,0,.35);
-        }
-
-        .menu-item {
-            width: 100%;
-            padding: 14px 16px;
-            text-align: left;
-            cursor: pointer;
-            background: white;
-            color: #1f2a38;
-            font-weight: 800;
-        }
-
-        .menu-item:hover {
-            background: #edf6ff;
-        }
-
-        .rules-text {
-            font-size: 12px;
-            line-height: 1.5;
-            font-weight: 700;
-            opacity: .92;
-        }
-
-        .rules-text h3 {
-            color: #ffe45a;
-            margin: 16px 0 5px;
-            font-size: 14px;
-        }
-
-        .close-btn {
-            margin-top: 15px;
-            width: 100%;
-            height: 46px;
-            border-radius: 14px;
-            cursor: pointer;
-            color: white;
-            font-weight: 900;
-            background:
-                linear-gradient(
-                    180deg,
-                    #35a9ef,
-                    #115fb8
-                );
-        }
-
-        .game-over-card {
-            text-align: center;
-        }
-
-        .winner-text {
-            font-family: "Fredoka", sans-serif;
-            font-size: 38px;
-            margin-bottom: 8px;
-        }
-
-        .winner-text.civilians {
-            color: #5df18d;
-        }
-
-        .winner-text.spy {
-            color: #ff6470;
-        }
-
-        .game-over-message {
-            font-size: 13px;
-            font-weight: 800;
-            line-height: 1.4;
-        }
-
-        .spy-reveal {
-            margin-top: 14px;
-            padding: 12px;
-            border-radius: 15px;
-            background: rgba(0,0,0,.2);
-            font-size: 12px;
-            font-weight: 800;
-        }
-
-        /* =====================================================
-           SMALL SCREENS
-           ===================================================== */
-
-        @media (max-height: 720px) {
-            .game-logo-wrap {
-                margin-bottom: 12px;
-            }
-
-            .game-logo {
-                padding: 10px 15px;
-            }
-
-            .logo-who {
-                font-size: 23px;
-            }
-
-            .logo-spy {
-                font-size: 33px;
-            }
-
-            .mode-card {
-                padding: 11px;
-            }
-
-            .mode-card strong {
-                font-size: 17px;
-            }
-
-            .players-grid {
-                gap: 9px 12px;
-            }
-
-            .avatar-ring {
-                width: 62px;
-                height: 62px;
-            }
-
-            .chat-box {
-                height: 130px;
-            }
-        }
-    </style>
+
+<meta charset="utf-8">
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
+>
+
+<meta
+    name="theme-color"
+    content="#4e9df8"
+>
+
+<title>Who Is The Spy?</title>
+
+<link
+    rel="preconnect"
+    href="https://fonts.googleapis.com"
+>
+
+<link
+    href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+    font-family: Fredoka, system-ui, sans-serif;
+    background: #eef7ff;
+    color: #17324d;
+}
+
+body {
+    overflow-x: hidden;
+}
+
+button,
+input,
+select {
+    font: inherit;
+}
+
+button {
+    border: 0;
+    cursor: pointer;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.screen {
+    min-height: 100vh;
+}
+
+
+/* HOME */
+
+.home {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background: linear-gradient(
+        160deg,
+        #55a9ff,
+        #dff2ff
+    );
+}
+
+.home-card,
+.modal-card {
+    background: #fff;
+    border-radius: 26px;
+    box-shadow:
+        0 16px 45px #266ba733;
+}
+
+.home-card {
+    width: min(430px, 92vw);
+    padding: 30px;
+}
+
+.logo {
+    text-align: center;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 24px;
+    text-shadow:
+        0 4px 12px #14569a55;
+}
+
+.logo span {
+    display: block;
+    font-size: 28px;
+}
+
+.logo b {
+    font-size: 54px;
+}
+
+.home-card h2 {
+    text-align: center;
+    margin: 0 0 20px;
+}
+
+.home-card input,
+.home-card select,
+.chat-row input {
+    width: 100%;
+    padding: 13px 15px;
+    border: 2px solid #d8e7f4;
+    border-radius: 14px;
+    outline: 0;
+    background: #f8fbff;
+}
+
+.home-card input:focus,
+.chat-row input:focus {
+    border-color: #55a9ff;
+}
+
+.row {
+    margin: 10px 0;
+}
+
+.row label {
+    display: block;
+    font-weight: 600;
+}
+
+.primary {
+    width: 100%;
+    padding: 13px 16px;
+    border-radius: 14px;
+    background: #2788ed;
+    color: #fff;
+    font-weight: 700;
+    box-shadow:
+        0 7px 15px #2788ed33;
+}
+
+.primary:disabled,
+.primary.disabled {
+    opacity: .45;
+    pointer-events: none;
+}
+
+.hint {
+    text-align: center;
+    color: #7890a4;
+    font-size: 13px;
+}
+
+
+/* GAME */
+
+.game {
+    background:
+        linear-gradient(
+            180deg,
+            #65b1ff 0,
+            #dff3ff 48%,
+            #edf8ff 100%
+        );
+
+    padding-bottom: 82px;
+}
+
+.topbar {
+    height: 74px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+}
+
+.icon,
+.round-btn {
+    background: #fff;
+    color: #24669e;
+    box-shadow:
+        0 5px 14px #22679c2b;
+}
+
+.icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+    font-size: 20px;
+}
+
+.room-card {
+    flex: 1;
+    text-align: center;
+    background: #ffffffd9;
+    border-radius: 15px;
+    padding: 7px 10px;
+    line-height: 1.1;
+    font-size: 12px;
+}
+
+.room-card strong {
+    font-size: 14px;
+}
+
+.room-card span {
+    font-weight: 700;
+}
+
+.room-card small {
+    display: block;
+    color: #65819b;
+    margin-top: 3px;
+}
+
+.timer-pill {
+    width: max-content;
+    margin: 2px auto 10px;
+    background: #174b79;
+    color: #fff;
+    border-radius: 99px;
+    padding: 6px 15px;
+    font-weight: 700;
+    box-shadow:
+        0 4px 12px #174b7933;
+}
+
+
+/* PLAYERS */
+
+.players-grid {
+    width: min(560px, 94vw);
+    margin: 0 auto;
+    padding: 8px 10px;
+
+    display: grid;
+    grid-template-columns:
+        repeat(3, 1fr);
+
+    gap: 14px 10px;
+}
+
+.player {
+    text-align: center;
+    min-width: 0;
+}
+
+.avatar {
+    width: 68px;
+    height: 68px;
+    margin: auto;
+
+    border-radius: 50%;
+
+    display: grid;
+    place-items: center;
+
+    background: #fff;
+    color: #287fc5;
+
+    border: 4px solid #c9e6ff;
+
+    font-size: 25px;
+    font-weight: 700;
+
+    position: relative;
+
+    box-shadow:
+        0 7px 15px #2d75a633;
+}
+
+.avatar.speaking {
+    border-color: #ffbd3c;
+
+    box-shadow:
+        0 0 0 5px #ffbd3c44,
+        0 7px 15px #2d75a633;
+
+    animation: pulse 1s infinite;
+}
+
+.player.dead {
+    opacity: .38;
+    filter: grayscale(1);
+}
+
+.num {
+    position: absolute;
+    left: -2px;
+    top: -4px;
+
+    background: #245f92;
+    color: #fff;
+
+    font-size: 11px;
+
+    border-radius: 10px;
+    padding: 2px 6px;
+}
+
+.ready-dot {
+    position: absolute;
+    right: -2px;
+    top: -3px;
+
+    background: #35c47a;
+    color: #fff;
+
+    border-radius: 50%;
+
+    font-size: 12px;
+
+    width: 20px;
+    height: 20px;
+
+    display: grid;
+    place-items: center;
+}
+
+.player-name {
+    font-size: 13px;
+    font-weight: 600;
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    margin-top: 5px;
+}
+
+.speaking-text {
+    font-size: 11px;
+    color: #e38b00;
+    font-weight: 700;
+}
+
+
+/* CHAT */
+
+.chat-card {
+    width: min(560px, 94vw);
+    margin: 6px auto 0;
+
+    background: #ffffffcc;
+    border: 1px solid #fff;
+
+    border-radius: 18px;
+
+    padding: 9px;
+
+    box-shadow:
+        0 7px 20px #266ba622;
+}
+
+.messages {
+    height: 150px;
+    overflow: auto;
+    padding: 5px 7px;
+}
+
+.message {
+    font-size: 13px;
+    margin: 5px 0;
+}
+
+.sender {
+    font-weight: 700;
+    color: #2b75ad;
+}
+
+.chat-row {
+    display: flex;
+    gap: 7px;
+}
+
+.chat-row button {
+    width: 46px;
+    border-radius: 13px;
+    background: #2788ed;
+    color: #fff;
+}
+
+
+/* FOOTER */
+
+.game footer {
+    position: fixed;
+
+    bottom: 0;
+    left: 0;
+    right: 0;
+
+    height: 70px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    gap: 17px;
+
+    background: #ffffffd9;
+    backdrop-filter: blur(10px);
+
+    border-top: 1px solid #fff;
+}
+
+.round-btn {
+    width: 50px;
+    height: 50px;
+
+    border-radius: 50%;
+
+    font-size: 22px;
+}
+
+.round-btn.active {
+    background: #ff6b6b;
+    color: #fff;
+
+    box-shadow:
+        0 0 0 6px #ff6b6b33;
+}
+
+
+/* REACTIONS */
+
+.reaction-panel {
+    position: fixed;
+
+    bottom: 77px;
+    left: 50%;
+
+    transform:
+        translateX(-50%);
+
+    display: flex;
+    gap: 6px;
+
+    padding: 8px;
+
+    background: #fff;
+
+    border-radius: 18px;
+
+    box-shadow:
+        0 10px 30px #1d588244;
+}
+
+.reaction-panel button {
+    background: #eef7ff;
+    border-radius: 12px;
+    padding: 8px;
+    font-size: 22px;
+}
+
+
+/* MODALS */
+
+.modal {
+    position: fixed;
+
+    inset: 0;
+
+    background: #17456e66;
+
+    backdrop-filter: blur(5px);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 20px;
+
+    z-index: 20;
+}
+
+.modal-card {
+    width: min(440px, 94vw);
+    max-height: 90vh;
+
+    overflow: auto;
+
+    padding: 24px;
+}
+
+.modal-card h2 {
+    margin: 0 0 10px;
+    text-align: center;
+}
+
+.spy-emoji {
+    text-align: center;
+    font-size: 45px;
+    margin-bottom: 5px;
+}
+
+.modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-head b {
+    color: #247ac0;
+}
+
+
+/* CATEGORY */
+
+.category-grid {
+    display: grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap: 9px;
+
+    margin: 15px 0;
+}
+
+.category-grid button,
+.vote-btn,
+.menu-card button {
+    padding: 12px;
+
+    border-radius: 13px;
+
+    background: #edf6ff;
+    color: #20577f;
+
+    font-weight: 600;
+}
+
+.category-grid button.selected {
+    background: #2788ed;
+    color: #fff;
+}
+
+.chosen-category {
+    text-align: center;
+
+    font-size: 31px;
+
+    font-weight: 700;
+
+    color: #2788ed;
+
+    margin: 20px 0;
+}
+
+.small-count {
+    text-align: center;
+    color: #7890a4;
+}
+
+
+/* VOTING */
+
+.vote-grid {
+    display: grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap: 9px;
+
+    margin-top: 15px;
+}
+
+.vote-btn {
+    background: #fff;
+    border: 2px solid #dceaf6;
+    text-align: left;
+}
+
+.vote-btn:active {
+    transform: scale(.98);
+}
+
+.red {
+    color: #e14d55;
+}
+
+
+/* EVENT */
+
+.event-card {
+    text-align: center;
+}
+
+.event-card #event-text {
+    padding: 14px;
+
+    background: #f1f8ff;
+
+    border-radius: 14px;
+
+    margin: 14px 0;
+
+    font-weight: 600;
+}
+
+
+/* GAME OVER */
+
+.big-title {
+    text-align: center;
+    font-size: 30px;
+    font-weight: 700;
+}
+
+.reveal {
+    background: #f2f8ff;
+
+    padding: 13px;
+
+    border-radius: 14px;
+
+    margin: 15px 0;
+
+    text-align: center;
+}
+
+
+/* MENU */
+
+.menu-card button {
+    width: 100%;
+    margin: 5px 0;
+    background: #f0f7ff;
+}
+
+.rules p {
+    line-height: 1.5;
+    color: #587189;
+}
+
+
+/* ANIMATION */
+
+@keyframes pulse {
+    50% {
+        transform: scale(1.04);
+    }
+}
+
+
+/* MOBILE */
+
+@media(max-width:380px) {
+
+    .players-grid {
+        gap: 10px 6px;
+    }
+
+    .avatar {
+        width: 60px;
+        height: 60px;
+    }
+
+    .round-btn {
+        width: 46px;
+        height: 46px;
+    }
+
+    .game footer {
+        gap: 11px;
+    }
+}
+
+</style>
+
 </head>
 
 <body>
 
-<div id="app">
-    <div class="app-shell">
 
-        <!-- =================================================
-             LOBBY
-             ================================================= -->
+<!-- HOME -->
 
-        <section id="lobby-screen" class="screen">
+<section
+    id="home"
+    class="screen home"
+>
 
-            <div class="game-logo-wrap">
-                <div class="game-logo">
-                    <span class="logo-who">WHO IS THE</span>
-                    <span class="logo-spy">SPY</span>
-                </div>
-            </div>
+    <div>
 
-            <div class="mode-title">
-                SELECT GAME MODE
-            </div>
+        <div class="logo">
+            <span>WHO IS THE</span>
+            <b>SPY?</b>
+        </div>
 
-            <div class="mode-grid">
 
-                <button
-                    id="mode-spy"
-                    class="mode-card selected"
-                    type="button"
-                    onclick="selectGameMode('spy')"
-                >
-                    <div class="mode-icon">🕵️</div>
-                    <strong>Who's the Spy</strong>
-                    <small>
-                        Villagers get the same word.
-                        Spy gets a different word.
-                    </small>
-                </button>
+        <div class="home-card">
 
-                <button
-                    id="mode-wordless"
-                    class="mode-card"
-                    type="button"
-                    onclick="selectGameMode('wordless')"
-                >
-                    <div class="mode-icon">❓</div>
-                    <strong>Wordless Spy</strong>
-                    <small>
-                        Spy gets no word and must
-                        guess it from descriptions.
-                    </small>
-                </button>
+            <h2>
+                Play with friends
+            </h2>
 
-            </div>
 
-            <div class="lobby-box">
+            <input
+                id="name-input"
+                maxlength="20"
+                autocomplete="nickname"
+                placeholder="Your name"
+            >
 
-                <div class="input-row">
 
-                    <input
-                        id="username"
-                        class="field"
-                        type="text"
-                        maxlength="20"
-                        autocomplete="off"
-                        placeholder="Enter Player Name"
-                    >
+            <div class="row">
 
-                    <select
-                        id="capacity"
-                        class="field"
-                    >
-                        <option value="4">4 Players</option>
-                        <option value="5">5 Players</option>
-                        <option value="6" selected>6 Players</option>
-                        <option value="7">7 Players</option>
-                        <option value="8">8 Players</option>
+                <label>
+                    Players
+
+                    <select id="capacity">
+
+                        <option>4</option>
+                        <option>5</option>
+                        <option selected>6</option>
+                        <option>7</option>
+                        <option>8</option>
+
                     </select>
 
-                </div>
-
-                <div class="main-buttons">
-
-                    <button
-                        class="big-btn btn-yellow"
-                        onclick="joinRoom('random')"
-                    >
-                        🔍<br>
-                        Auto Match
-                    </button>
-
-                    <button
-                        class="big-btn btn-cyan"
-                        onclick="joinRoom('create')"
-                    >
-                        🏠<br>
-                        Create Room
-                    </button>
-
-                </div>
-
-                <button
-                    class="big-btn full-btn"
-                    onclick="joinRoom('join')"
-                >
-                    🔢 Join With Room Code
-                </button>
-
-                <div class="online-counter">
-                    👥 Players Online:
-                    <span id="active-users-count">0</span>
-                </div>
-
-                <div
-                    id="loading-text"
-                    class="loading-text"
-                ></div>
-
-            </div>
-        </section>
-
-
-        <!-- =================================================
-             GAME SCREEN
-             ================================================= -->
-
-        <section
-            id="game-screen"
-            class="screen hidden"
-        >
-
-            <div class="game-board">
-
-                <div class="topbar">
-
-                    <button
-                        class="icon-btn"
-                        onclick="toggleMenu()"
-                        aria-label="Menu"
-                    >
-                        ☰
-                    </button>
-
-                    <div class="room-heading">
-                        <div class="room-name">
-                            Room:
-                            <span id="room-name">----</span>
-                        </div>
-
-                        <div
-                            id="room-status"
-                            class="room-status"
-                        >
-                            Waiting...
-                        </div>
-                    </div>
-
-                    <button
-                        class="icon-btn"
-                        onclick="copyRoomCode()"
-                        aria-label="Copy room code"
-                    >
-                        ⧉
-                    </button>
-
-                </div>
-
-
-                <!-- SECRET WORD -->
-
-                <div
-                    id="secret-banner"
-                    class="secret-banner hidden"
-                >
-                    <div class="secret-label">
-                        Your Secret Word
-                    </div>
-
-                    <div
-                        id="secret-value"
-                        class="secret-value"
-                    >
-                        WAITING
-                    </div>
-
-                    <div
-                        id="secret-role"
-                        class="secret-role"
-                    ></div>
-                </div>
-
-
-                <!-- PLAYERS -->
-
-                <div class="players-wrap">
-                    <div
-                        id="players-grid"
-                        class="players-grid"
-                    ></div>
-                </div>
-
-
-                <!-- ACTION AREA -->
-
-                <div class="action-area">
-
-                    <div
-                        id="timer-wrap"
-                        class="timer-wrap"
-                    >
-                        <div class="timer-head">
-
-                            <span id="timer-text">
-                                YOUR TURN: 30s
-                            </span>
-
-                            <button
-                                class="pass-btn"
-                                onclick="endMyTurn()"
-                            >
-                                PASS MIC
-                            </button>
-
-                        </div>
-
-                        <div class="timer-bar">
-                            <div
-                                id="timer-progress"
-                                class="timer-progress"
-                            ></div>
-                        </div>
-                    </div>
-
-
-                    <button
-                        id="ready-button"
-                        class="ready-btn"
-                        onclick="toggleReady()"
-                    >
-                        Get Ready
-                    </button>
-
-
-                    <div
-                        id="alert-bar"
-                        class="alert-bar"
-                    >
-                        Waiting for players...
-                    </div>
-
-                </div>
-
-
-                <!-- CHAT -->
-
-                <div class="chat-box">
-
-                    <div
-                        id="messages"
-                        class="messages"
-                    ></div>
-
-                    <div class="chat-input-row">
-
-                        <input
-                            id="chat-input"
-                            class="chat-input"
-                            type="text"
-                            maxlength="300"
-                            autocomplete="off"
-                            placeholder="Type a message..."
-                        >
-
-                        <button
-                            class="send-btn"
-                            onclick="sendChat()"
-                        >
-                            ➤
-                        </button>
-
-                    </div>
-
-                </div>
-
-
-                <!-- BOTTOM BAR -->
-
-                <div class="bottom-bar">
-
-                    <button
-                        id="mic-button"
-                        class="bottom-control off"
-                        onclick="toggleMic()"
-                        title="Microphone"
-                    >
-                        🎤
-                    </button>
-
-                    <button
-                        class="bottom-control"
-                        onclick="toggleReactions()"
-                        title="Reactions"
-                    >
-                        😀
-                    </button>
-
-                    <button
-                        class="bottom-control"
-                        onclick="focusChat()"
-                        title="Chat"
-                    >
-                        💬
-                    </button>
-
-                </div>
+                </label>
 
             </div>
 
 
-            <!-- REACTION PANEL -->
+            <div class="row">
 
-            <div
-                id="reaction-panel"
-                class="reaction-panel hidden"
+                <input
+                    id="room-input"
+                    maxlength="4"
+                    inputmode="numeric"
+                    placeholder="Room code (optional)"
+                >
+
+            </div>
+
+
+            <button
+                class="primary"
+                onclick="joinRoom()"
             >
-                <button class="reaction-btn" onclick="sendReaction('🎉')">🎉</button>
-                <button class="reaction-btn" onclick="sendReaction('😂')">😂</button>
-                <button class="reaction-btn" onclick="sendReaction('❤️')">❤️</button>
-                <button class="reaction-btn" onclick="sendReaction('😱')">😱</button>
-                <button class="reaction-btn" onclick="sendReaction('👏')">👏</button>
-                <button class="reaction-btn" onclick="sendReaction('👍')">👍</button>
-                <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
-                <button class="reaction-btn" onclick="sendReaction('🤔')">🤔</button>
-                <button class="reaction-btn" onclick="sendReaction('😎')">😎</button>
-                <button class="reaction-btn" onclick="sendReaction('😭')">😭</button>
-                <button class="reaction-btn" onclick="sendReaction('😡')">😡</button>
-                <button class="reaction-btn" onclick="sendReaction('💀')">💀</button>
-            </div>
+                Join / Create Room
+            </button>
 
 
-            <!-- MENU -->
+            <p class="hint">
+                Leave room code empty to create a new room.
+            </p>
 
-            <div
-                id="menu-card"
-                class="menu-card hidden"
-            >
-                <button
-                    class="menu-item"
-                    onclick="openRules()"
-                >
-                    📖 Rules
-                </button>
-
-                <button
-                    class="menu-item"
-                    onclick="toggleVolume()"
-                >
-                    🔊 Volume
-                </button>
-
-                <button
-                    class="menu-item"
-                    onclick="spectateMode()"
-                >
-                    👁️ Spectate
-                </button>
-
-                <button
-                    class="menu-item"
-                    onclick="leaveGame()"
-                >
-                    🚪 Exit
-                </button>
-            </div>
-
-        </section>
-
-
-        <!-- =================================================
-             VOTING OVERLAY
-             ================================================= -->
-
-        <div
-            id="vote-overlay"
-            class="overlay hidden"
-        >
-            <div class="overlay-card">
-
-                <h2
-                    class="overlay-title"
-                    style="color:#ff656f;"
-                >
-                    Who's The Spy?
-                </h2>
-
-                <div
-                    id="vote-status"
-                    class="overlay-subtitle"
-                >
-                    Vote for the player you suspect.
-                </div>
-
-                <div
-                    id="vote-grid"
-                    class="vote-grid"
-                ></div>
-
-            </div>
-        </div>
-
-
-        <!-- =================================================
-             RULES OVERLAY
-             ================================================= -->
-
-        <div
-            id="rules-overlay"
-            class="overlay hidden"
-        >
-            <div class="overlay-card">
-
-                <h2 class="overlay-title">
-                    Game Rules
-                </h2>
-
-                <div
-                    id="rules-content"
-                    class="rules-text"
-                ></div>
-
-                <button
-                    class="close-btn"
-                    onclick="closeRules()"
-                >
-                    Close
-                </button>
-
-            </div>
-        </div>
-
-
-        <!-- =================================================
-             GAME OVER
-             ================================================= -->
-
-        <div
-            id="game-over-overlay"
-            class="overlay hidden"
-        >
-            <div class="overlay-card game-over-card">
-
-                <div
-                    id="winner-text"
-                    class="winner-text"
-                >
-                    GAME OVER
-                </div>
-
-                <div
-                    id="game-over-message"
-                    class="game-over-message"
-                ></div>
-
-                <div
-                    id="spy-reveal"
-                    class="spy-reveal"
-                ></div>
-
-                <button
-                    class="close-btn"
-                    onclick="leaveGame()"
-                >
-                    Back To Lobby
-                </button>
-
-            </div>
         </div>
 
     </div>
+
+</section>
+
+
+<!-- GAME -->
+
+<section
+    id="game"
+    class="screen game hidden"
+>
+
+    <header class="topbar">
+
+        <button
+            class="icon"
+            onclick="toggleMenu()"
+        >
+            ☰
+        </button>
+
+
+        <div class="room-card">
+
+            <div>
+                ID:
+                <span id="room-id">
+                    ----
+                </span>
+            </div>
+
+
+            <div id="word-line">
+                <strong>
+                    Who's the Spy
+                </strong>
+            </div>
+
+
+            <small id="round-line"></small>
+
+        </div>
+
+
+        <button
+            class="icon"
+            onclick="openRules()"
+        >
+            ?
+        </button>
+
+
+        <button
+            class="icon"
+            onclick="showPlayersCount()"
+        >
+            ♙
+        </button>
+
+    </header>
+
+
+    <div class="timer-pill">
+
+        ◷
+
+        <span id="timer">
+            --
+        </span>
+
+        s
+
+    </div>
+
+
+    <main>
+
+        <div
+            id="players-grid"
+            class="players-grid"
+        ></div>
+
+
+        <div class="chat-card">
+
+            <div
+                id="messages"
+                class="messages"
+            ></div>
+
+
+            <div class="chat-row">
+
+                <input
+                    id="chat-input"
+                    maxlength="300"
+                    placeholder="Type a message..."
+                >
+
+
+                <button
+                    onclick="sendChat()"
+                >
+                    ➤
+                </button>
+
+            </div>
+
+        </div>
+
+    </main>
+
+
+    <footer>
+
+        <button
+            class="round-btn"
+            onclick="toggleSound()"
+        >
+            🔊
+        </button>
+
+
+        <button
+            id="mic-button"
+            class="round-btn mic"
+            onclick="toggleMic()"
+        >
+            🎤
+        </button>
+
+
+        <button
+            class="round-btn"
+            onclick="toggleReactions()"
+        >
+            😊
+        </button>
+
+
+        <button
+            class="round-btn"
+            onclick="focusChat()"
+        >
+            💬
+        </button>
+
+    </footer>
+
+
+    <div
+        id="reaction-panel"
+        class="reaction-panel hidden"
+    >
+
+        <button onclick="sendReaction('😂')">
+            😂
+        </button>
+
+        <button onclick="sendReaction('😭')">
+            😭
+        </button>
+
+        <button onclick="sendReaction('😡')">
+            😡
+        </button>
+
+        <button onclick="sendReaction('😱')">
+            😱
+        </button>
+
+        <button onclick="sendReaction('🤔')">
+            🤔
+        </button>
+
+        <button onclick="sendReaction('👏')">
+            👏
+        </button>
+
+    </div>
+
+</section>
+
+
+<!-- READY -->
+
+<div
+    id="ready-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card">
+
+        <div class="spy-emoji">
+            🕵️
+        </div>
+
+        <h2>
+            Room is full
+        </h2>
+
+        <p
+            id="ready-status"
+            style="text-align:center;color:#6b8195"
+        >
+            Everyone must be ready.
+        </p>
+
+
+        <button
+            id="ready-button"
+            class="primary"
+            onclick="toggleReady()"
+        >
+            I'm Ready
+        </button>
+
+    </div>
+
 </div>
 
 
-<!-- =========================================================
-     SOUND EFFECTS
-     ========================================================= -->
+<!-- CATEGORY -->
 
-<audio
-    id="sound-click"
-    src="https://actions.google.com/sounds/v1/ui/button_click.ogg"
-    preload="auto"
-></audio>
+<div
+    id="category-overlay"
+    class="modal hidden"
+>
 
-<audio
-    id="sound-start"
-    src="https://actions.google.com/sounds/v1/science_fiction/computer_beeps.ogg"
-    preload="auto"
-></audio>
+    <div class="modal-card">
 
-<audio
-    id="sound-turn"
-    src="https://actions.google.com/sounds/v1/communication/walkie_talkie_squelch.ogg"
-    preload="auto"
-></audio>
+        <div class="spy-emoji">
+            🕵️
+        </div>
 
-<audio
-    id="sound-timeout"
-    src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
-    preload="auto"
-></audio>
 
-<audio
-    id="sound-win"
-    src="https://actions.google.com/sounds/v1/crowds/crowd_cheering.ogg"
-    preload="auto"
-></audio>
+        <div class="modal-head">
 
-<audio
-    id="sound-lose"
-    src="https://actions.google.com/sounds/v1/science_fiction/power_down.ogg"
-    preload="auto"
-></audio>
+            <h2>
+                Select a category
+            </h2>
+
+            <b id="category-count">
+                9s
+            </b>
+
+        </div>
+
+
+        <div
+            id="category-grid"
+            class="category-grid"
+        ></div>
+
+
+        <button
+            id="category-confirm"
+            class="primary disabled"
+            onclick="confirmCategory()"
+        >
+            Confirm
+        </button>
+
+    </div>
+
+</div>
+
+
+<!-- CATEGORY RESULT -->
+
+<div
+    id="category-result-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card">
+
+        <h2>
+            Categories of this round
+        </h2>
+
+
+        <div
+            id="chosen-category"
+            class="chosen-category"
+        >
+            Life
+        </div>
+
+
+        <div class="small-count">
+
+            <span id="result-count">
+                3
+            </span>
+
+            s
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- VOTING -->
+
+<div
+    id="vote-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card">
+
+        <h2 class="red">
+            Who's The Spy?
+        </h2>
+
+
+        <p
+            id="vote-status"
+            style="text-align:center;color:#6b8195"
+        >
+            Vote for the player you suspect.
+        </p>
+
+
+        <div
+            id="vote-grid"
+            class="vote-grid"
+        ></div>
+
+    </div>
+
+</div>
+
+
+<!-- EVENT -->
+
+<div
+    id="event-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card event-card">
+
+        <div class="spy-emoji">
+            🕵️
+        </div>
+
+
+        <h2 id="event-title">
+            Elimination
+        </h2>
+
+
+        <div id="event-text"></div>
+
+
+        <button
+            class="primary"
+            onclick="closeEvent()"
+        >
+            OK
+        </button>
+
+    </div>
+
+</div>
+
+
+<!-- GAME OVER -->
+
+<div
+    id="gameover-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card">
+
+        <div
+            id="gameover-title"
+            class="big-title"
+        >
+            GAME OVER
+        </div>
+
+
+        <p
+            id="gameover-message"
+            style="text-align:center"
+        ></p>
+
+
+        <div
+            id="spy-reveal"
+            class="reveal"
+        ></div>
+
+
+        <button
+            class="primary"
+            onclick="location.reload()"
+        >
+            Back To Lobby
+        </button>
+
+    </div>
+
+</div>
+
+
+<!-- MENU -->
+
+<div
+    id="menu-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card menu-card">
+
+        <h2>
+            Menu
+        </h2>
+
+
+        <button onclick="openRules()">
+            📖 Rules
+        </button>
+
+
+        <button onclick="toggleSound()">
+            🔊 Sound
+        </button>
+
+
+        <button onclick="leaveGame()">
+            🚪 Exit
+        </button>
+
+
+        <button onclick="hide('menu-overlay')">
+            Close
+        </button>
+
+    </div>
+
+</div>
+
+
+<!-- RULES -->
+
+<div
+    id="rules-overlay"
+    class="modal hidden"
+>
+
+    <div class="modal-card rules">
+
+        <h2>
+            How to play
+        </h2>
+
+
+        <p>
+            Everyone gets a word.
+            Villagers receive the common word
+            and the Spy receives a related word.
+        </p>
+
+
+        <p>
+            Players describe their word without
+            saying it. After everyone speaks,
+            alive players vote for the suspected Spy.
+        </p>
+
+
+        <p>
+            If a villager is eliminated,
+            another description round begins
+            with the same words.
+            If the Spy is eliminated,
+            civilians win.
+            If only two players remain,
+            the Spy wins.
+        </p>
+
+
+        <p>
+            <b>Voice:</b>
+            Tap the microphone once to allow
+            microphone access.
+            During your turn the mic becomes active;
+            other players can hear you live.
+        </p>
+
+
+        <button
+            class="primary"
+            onclick="hide('rules-overlay')"
+        >
+            Close
+        </button>
+
+    </div>
+
+</div>
 
 
 <script src="/static/script.js"></script>
 
 </body>
+
 </html>
