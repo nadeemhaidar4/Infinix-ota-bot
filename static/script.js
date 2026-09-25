@@ -4,7 +4,7 @@ let room = "";
 let isAlive = true;
 
 // Agora Variables
-const AGORA_APP_ID = "YOUR_AGORA_APP_ID_HERE"; // <-- Yahan apna Agora App ID dalein
+const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4"; // <-- Yahan apna Agora App ID dalein
 let rtcClient;
 let localAudioTrack;
 
