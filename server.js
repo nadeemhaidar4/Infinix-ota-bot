@@ -2,13 +2,13 @@ const express = require("express");
 const dns = require("dns").promises;
 const net = require("net");
 const path = require("path");
-const youtubedl = require("youtube-dl-exec"); 
+const youtubedl = require("youtube-dl-exec");
 
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
-const INSPECT_TIMEOUT = 30000; 
+const INSPECT_TIMEOUT = 30000;
 const DOWNLOAD_TIMEOUT = 300000; // 5 mins
 const MAX_REDIRECTS = 4;
 
@@ -31,7 +31,7 @@ const ALLOWED_MIME = new Set([
   "image/png",
   "image/webp",
   "image/gif",
-  "application/octet-stream" 
+  "application/octet-stream"
 ]);
 
 const rateMap = new Map();
@@ -114,7 +114,6 @@ function releaseDownload(ip) {
   else activeMap.set(ip, count - 1);
 }
 
-// FIX 2: Android File Manager ke liye completely strict filename banaya hai
 function filenameFromUrl(url, contentType = "", customTitle = null) {
   let ext = contentType.includes("video") ? ".mp4" : contentType.includes("audio") ? ".mp3" : ".mp4";
   
@@ -151,25 +150,30 @@ function isSocialMediaUrl(urlStr) {
     }
 }
 
-// FIX 1: Video ke URL ke sath uske bypass "headers" bhi fetch kiye gaye hain
 async function extractDirectVideoUrl(url) {
     try {
         const output = await youtubedl(url, {
             dumpSingleJson: true,
             noCheckCertificates: true,
             noWarnings: true,
-            format: "b" 
+            format: "b"
         });
 
         if (!output) throw new Error("Video file not found in post.");
 
         let directUrl = output.url;
-        let headers = output.http_headers || {}; // Ye headers ab Instagram ki blocking bypass karenge
+        let headers = output.http_headers || {};
+
+        // Host header remove karna zaroori hai taki redirects properly follow ho sakein
+        delete headers['Host'];
+        delete headers['host'];
 
         if (!directUrl && output.requested_formats && output.requested_formats.length > 0) {
             directUrl = output.requested_formats[0].url;
             if (output.requested_formats[0].http_headers) {
                 headers = output.requested_formats[0].http_headers;
+                delete headers['Host'];
+                delete headers['host'];
             }
         }
 
@@ -186,6 +190,7 @@ async function extractDirectVideoUrl(url) {
     }
 }
 
+// FIX: Direct public URLs ke liye strict security function
 async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   if (redirectCount > MAX_REDIRECTS) throw new Error("Too many redirects.");
   const url = await validateUrl(initialUrl);
@@ -195,6 +200,8 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
       "Accept": "*/*",
       ...(options.headers || {})
   };
+  delete mergedHeaders['Host'];
+  delete mergedHeaders['host'];
 
   const response = await fetch(url, {
     ...options,
@@ -212,7 +219,25 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   return response;
 }
 
-app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.4" }));
+// FIX: Instagram/Youtube ki CDN links ke liye native fetch (jo cookies aur headers safely carry karta hai)
+async function fetchCDN(targetUrl, method, headers, signal) {
+    const mergedHeaders = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        ...headers
+    };
+    delete mergedHeaders['Host'];
+    delete mergedHeaders['host'];
+
+    return await fetch(targetUrl, {
+        method: method,
+        headers: mergedHeaders,
+        redirect: "follow", // Native redirect jisme headers nahi tootenge
+        signal: signal
+    });
+}
+
+app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.5" }));
 
 app.post("/api/inspect", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
@@ -224,8 +249,9 @@ app.post("/api/inspect", async (req, res) => {
     let targetUrl = url.toString();
     let extractedTitle = null;
     let customHeaders = {};
+    let isSocial = isSocialMediaUrl(targetUrl);
   
-    if (isSocialMediaUrl(targetUrl)) {
+    if (isSocial) {
         const cacheKey = targetUrl;
         if (extractionCache.has(cacheKey)) {
             const cached = extractionCache.get(cacheKey);
@@ -235,7 +261,8 @@ app.post("/api/inspect", async (req, res) => {
         } else {
             const extractedData = await extractDirectVideoUrl(targetUrl);
             extractionCache.set(cacheKey, extractedData);
-            setTimeout(() => extractionCache.delete(cacheKey), 10 * 60 * 1000);
+            // Cache timeout 10 minutes se 5 minutes kar diya taki link expire na ho
+            setTimeout(() => extractionCache.delete(cacheKey), 5 * 60 * 1000); 
             
             targetUrl = extractedData.url;
             extractedTitle = extractedData.title;
@@ -249,7 +276,11 @@ app.post("/api/inspect", async (req, res) => {
     try {
       let response;
       try {
-        response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal, headers: customHeaders });
+        if(isSocial) {
+            response = await fetchCDN(targetUrl, "HEAD", customHeaders, controller.signal);
+        } else {
+            response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal });
+        }
       } catch {
         response = null;
       }
@@ -258,11 +289,15 @@ app.post("/api/inspect", async (req, res) => {
       let contentLength = response ? Number(response.headers.get("content-length") || 0) : 0;
   
       if (!response || !response.ok || !contentType) {
-        response = await fetchSafe(targetUrl, {
-          method: "GET",
-          headers: { ...customHeaders, Range: "bytes=0-0" },
-          signal: controller.signal
-        });
+        if(isSocial) {
+            response = await fetchCDN(targetUrl, "GET", { ...customHeaders, Range: "bytes=0-0" }, controller.signal);
+        } else {
+            response = await fetchSafe(targetUrl, {
+                method: "GET",
+                headers: { Range: "bytes=0-0" },
+                signal: controller.signal
+            });
+        }
         contentType = getContentType(response);
         contentLength = Number(response.headers.get("content-length") || 0);
         try { await response.body?.cancel(); } catch {}
@@ -313,8 +348,9 @@ app.get("/api/download", async (req, res) => {
     let targetUrl = (await validateUrl(rawUrl)).toString();
     let extractedTitle = null;
     let customHeaders = {};
+    let isSocial = isSocialMediaUrl(targetUrl);
 
-    if (isSocialMediaUrl(targetUrl)) {
+    if (isSocial) {
         const cacheKey = targetUrl;
         if (extractionCache.has(cacheKey)) {
             const cached = extractionCache.get(cacheKey);
@@ -332,18 +368,18 @@ app.get("/api/download", async (req, res) => {
     const controller = new AbortController();
     const timer = setTimeout(() => { controller.abort(); }, DOWNLOAD_TIMEOUT);
 
-    // FIX 3: Agar mobile phone screen lock hone se connection drop kare, toh process ko safely kill karo.
     req.on("close", () => {
         controller.abort();
         clearTimeout(timer);
     });
 
     try {
-      const response = await fetchSafe(targetUrl, { 
-          method: "GET", 
-          signal: controller.signal, 
-          headers: customHeaders 
-      });
+      let response;
+      if (isSocial) {
+          response = await fetchCDN(targetUrl, "GET", customHeaders, controller.signal);
+      } else {
+          response = await fetchSafe(targetUrl, { method: "GET", signal: controller.signal });
+      }
       
       if (!response.ok) return res.status(400).json({ ok: false, message: `Media server returned HTTP ${response.status}.` });
 
@@ -360,6 +396,8 @@ app.get("/api/download", async (req, res) => {
       res.setHeader("Content-Type", contentType);
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Accept-Ranges", "bytes"); // Android Download Managers ke liye zaruri header
+
       if (contentLength) res.setHeader("Content-Length", String(contentLength));
 
       let total = 0;
