@@ -142,7 +142,14 @@ function getContentType(response) {
 
 function isSocialMediaUrl(urlStr) {
     try {
-        const hostname = new URL(urlStr).hostname.replace(/^www\./, "");
+        const url = new URL(urlStr);
+        const hostname = url.hostname.replace(/^www\./, "");
+        
+        // FIX: Agar URL already CDN ka hai, toh uspe scraper nahi chalana hai.
+        if (hostname.includes("cdninstagram.com") || hostname.includes("fbcdn.net") || hostname.includes("googlevideo.com")) {
+            return false;
+        }
+
         const platforms = ["instagram.com", "facebook.com", "tiktok.com", "youtube.com", "youtu.be", "twitter.com", "x.com", "fb.watch"];
         return platforms.some(p => hostname.includes(p));
     } catch {
@@ -164,7 +171,6 @@ async function extractDirectVideoUrl(url) {
         let directUrl = output.url;
         let headers = output.http_headers || {};
 
-        // Host header remove karna zaroori hai taki redirects properly follow ho sakein
         delete headers['Host'];
         delete headers['host'];
 
@@ -190,7 +196,6 @@ async function extractDirectVideoUrl(url) {
     }
 }
 
-// FIX: Direct public URLs ke liye strict security function
 async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   if (redirectCount > MAX_REDIRECTS) throw new Error("Too many redirects.");
   const url = await validateUrl(initialUrl);
@@ -219,7 +224,6 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   return response;
 }
 
-// FIX: Instagram/Youtube ki CDN links ke liye native fetch (jo cookies aur headers safely carry karta hai)
 async function fetchCDN(targetUrl, method, headers, signal) {
     const mergedHeaders = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -232,12 +236,12 @@ async function fetchCDN(targetUrl, method, headers, signal) {
     return await fetch(targetUrl, {
         method: method,
         headers: mergedHeaders,
-        redirect: "follow", // Native redirect jisme headers nahi tootenge
+        redirect: "follow", 
         signal: signal
     });
 }
 
-app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.5" }));
+app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.6" }));
 
 app.post("/api/inspect", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
@@ -250,24 +254,31 @@ app.post("/api/inspect", async (req, res) => {
     let extractedTitle = null;
     let customHeaders = {};
     let isSocial = isSocialMediaUrl(targetUrl);
+    let useCDNFetch = false;
   
-    if (isSocial) {
-        const cacheKey = targetUrl;
-        if (extractionCache.has(cacheKey)) {
-            const cached = extractionCache.get(cacheKey);
-            targetUrl = cached.url;
-            extractedTitle = cached.title;
-            customHeaders = cached.headers;
-        } else {
-            const extractedData = await extractDirectVideoUrl(targetUrl);
-            extractionCache.set(cacheKey, extractedData);
-            // Cache timeout 10 minutes se 5 minutes kar diya taki link expire na ho
-            setTimeout(() => extractionCache.delete(cacheKey), 5 * 60 * 1000); 
-            
-            targetUrl = extractedData.url;
-            extractedTitle = extractedData.title;
-            customHeaders = extractedData.headers;
-        }
+    if (extractionCache.has(targetUrl)) {
+        const cached = extractionCache.get(targetUrl);
+        targetUrl = cached.url;
+        extractedTitle = cached.title;
+        customHeaders = cached.headers;
+        useCDNFetch = true;
+    } else if (isSocial) {
+        const extractedData = await extractDirectVideoUrl(targetUrl);
+        
+        // FIX: Ab original URL aur direct CDN URL dono ko cache me save karenge.
+        // Taki agar frontend CDN URL dubara bheje, toh code usko pehchaan le.
+        extractionCache.set(targetUrl, extractedData);
+        extractionCache.set(extractedData.url, extractedData);
+        
+        setTimeout(() => {
+            extractionCache.delete(targetUrl);
+            extractionCache.delete(extractedData.url);
+        }, 15 * 60 * 1000); // 15 mins
+        
+        targetUrl = extractedData.url;
+        extractedTitle = extractedData.title;
+        customHeaders = extractedData.headers;
+        useCDNFetch = true;
     }
   
     const controller = new AbortController();
@@ -276,7 +287,7 @@ app.post("/api/inspect", async (req, res) => {
     try {
       let response;
       try {
-        if(isSocial) {
+        if(useCDNFetch) {
             response = await fetchCDN(targetUrl, "HEAD", customHeaders, controller.signal);
         } else {
             response = await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal });
@@ -289,7 +300,7 @@ app.post("/api/inspect", async (req, res) => {
       let contentLength = response ? Number(response.headers.get("content-length") || 0) : 0;
   
       if (!response || !response.ok || !contentType) {
-        if(isSocial) {
+        if(useCDNFetch) {
             response = await fetchCDN(targetUrl, "GET", { ...customHeaders, Range: "bytes=0-0" }, controller.signal);
         } else {
             response = await fetchSafe(targetUrl, {
@@ -348,21 +359,22 @@ app.get("/api/download", async (req, res) => {
     let targetUrl = (await validateUrl(rawUrl)).toString();
     let extractedTitle = null;
     let customHeaders = {};
-    let isSocial = isSocialMediaUrl(targetUrl);
+    let useCDNFetch = false;
 
-    if (isSocial) {
-        const cacheKey = targetUrl;
-        if (extractionCache.has(cacheKey)) {
-            const cached = extractionCache.get(cacheKey);
-            targetUrl = cached.url;
-            extractedTitle = cached.title;
-            customHeaders = cached.headers;
-        } else {
-            const extractedData = await extractDirectVideoUrl(targetUrl);
-            targetUrl = extractedData.url;
-            extractedTitle = extractedData.title;
-            customHeaders = extractedData.headers;
-        }
+    // FIX: Yahan targetUrl CDN ka link ho ya original Instagram ka link, 
+    // cache se uske special headers uth jayenge aur yt-dlp error nahi dega.
+    if (extractionCache.has(targetUrl)) {
+        const cached = extractionCache.get(targetUrl);
+        targetUrl = cached.url;
+        extractedTitle = cached.title;
+        customHeaders = cached.headers;
+        useCDNFetch = true;
+    } else if (isSocialMediaUrl(targetUrl)) {
+        const extractedData = await extractDirectVideoUrl(targetUrl);
+        targetUrl = extractedData.url;
+        extractedTitle = extractedData.title;
+        customHeaders = extractedData.headers;
+        useCDNFetch = true;
     }
 
     const controller = new AbortController();
@@ -375,7 +387,7 @@ app.get("/api/download", async (req, res) => {
 
     try {
       let response;
-      if (isSocial) {
+      if (useCDNFetch) {
           response = await fetchCDN(targetUrl, "GET", customHeaders, controller.signal);
       } else {
           response = await fetchSafe(targetUrl, { method: "GET", signal: controller.signal });
@@ -391,12 +403,13 @@ app.get("/api/download", async (req, res) => {
       }
 
       const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
+      const safeFilename = filename.replace(/[\r\n"']/g, ""); // Security ke liye taaki filename break na ho
 
       res.statusCode = 200;
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
       res.setHeader("Cache-Control", "no-store");
-      res.setHeader("Accept-Ranges", "bytes"); // Android Download Managers ke liye zaruri header
+      res.setHeader("Accept-Ranges", "bytes");
 
       if (contentLength) res.setHeader("Content-Length", String(contentLength));
 
