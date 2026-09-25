@@ -5,60 +5,57 @@ const path = require("path");
 
 const app = express();
 
-const PORT = Number(process.env.PORT || 10000);
+const PORT = process.env.PORT || 10000;
 
 const MAX_BYTES = 250 * 1024 * 1024;
-const INSPECT_TIMEOUT_MS = 15000;
-const DOWNLOAD_TIMEOUT_MS = 60000;
+const INSPECT_TIMEOUT = 15000;
+const DOWNLOAD_TIMEOUT = 60000;
 const MAX_REDIRECTS = 4;
-const MAX_ACTIVE_PER_IP = 3;
 
-const RATE_WINDOW_MS = 60 * 1000;
+const MAX_ACTIVE_PER_IP = 3;
+const RATE_WINDOW = 60 * 1000;
 const RATE_LIMIT = 20;
 
-const rateStore = new Map();
-const activeDownloads = new Map();
+const PUBLIC_DIR = path.join(__dirname, "public");
 
-const allowedTypes = new Set([
+const ALLOWED_MIME = new Set([
   "video/mp4",
   "video/webm",
   "video/quicktime",
   "video/x-matroska",
-
   "audio/mpeg",
   "audio/mp4",
   "audio/wav",
   "audio/webm",
-
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif"
 ]);
 
-// --------------------------------------------------
-// BASIC HELPERS
-// --------------------------------------------------
+const rateMap = new Map();
+const activeMap = new Map();
 
-function getClientIp(req) {
-  const forwarded = req.headers["x-forwarded-for"];
+app.use(express.json({ limit: "100kb" }));
 
-  if (typeof forwarded === "string" && forwarded.length > 0) {
-    return forwarded.split(",")[0].trim();
+function cleanIp(ip) {
+  if (!ip) return "unknown";
+
+  if (ip.includes(",")) {
+    ip = ip.split(",")[0].trim();
   }
 
-  return req.socket.remoteAddress || "unknown";
+  if (ip.startsWith("::ffff:")) {
+    ip = ip.substring(7);
+  }
+
+  return ip;
 }
 
 function isPrivateIPv4(ip) {
   const parts = ip.split(".").map(Number);
 
-  if (
-    parts.length !== 4 ||
-    parts.some(
-      (n) => !Number.isInteger(n) || n < 0 || n > 255
-    )
-  ) {
+  if (parts.length !== 4 || parts.some(Number.isNaN)) {
     return false;
   }
 
@@ -67,664 +64,560 @@ function isPrivateIPv4(ip) {
   return (
     a === 10 ||
     a === 127 ||
-    a === 0 ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
+    (a === 192 && b === 168) ||
+    a === 0
   );
 }
 
-function isBlockedHostname(hostname) {
-  const host = hostname.toLowerCase();
+function isPrivateIPv6(ip) {
+  const value = ip.toLowerCase();
 
   return (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host === "0.0.0.0" ||
-    host === "[::1]"
+    value === "::1" ||
+    value === "::" ||
+    value.startsWith("fc") ||
+    value.startsWith("fd") ||
+    value.startsWith("fe80:")
   );
 }
 
-async function isSafeHostname(hostname) {
-  if (isBlockedHostname(hostname)) {
-    return false;
-  }
+async function isBlockedHost(hostname) {
+  const host = hostname.toLowerCase();
 
-  const ipType = net.isIP(hostname);
-
-  if (ipType === 4) {
-    return !isPrivateIPv4(hostname);
-  }
-
-  if (ipType === 6) {
-    const normalized = hostname.toLowerCase();
-
-    if (
-      normalized === "::1" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      normalized.startsWith("fe80:")
-    ) {
-      return false;
-    }
-
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "local" ||
+    host === "metadata.google.internal"
+  ) {
     return true;
   }
 
+  const type = net.isIP(host);
+
+  if (type === 4) {
+    return isPrivateIPv4(host);
+  }
+
+  if (type === 6) {
+    return isPrivateIPv6(host);
+  }
+
   try {
-    const addresses = await dns.lookup(hostname, {
+    const records = await dns.lookup(host, {
       all: true,
       verbatim: true
     });
 
-    if (!addresses.length) {
-      return false;
-    }
-
-    for (const address of addresses) {
-      if (
-        address.family === 4 &&
-        isPrivateIPv4(address.address)
-      ) {
-        return false;
+    for (const record of records) {
+      if (record.family === 4 && isPrivateIPv4(record.address)) {
+        return true;
       }
 
-      if (address.family === 6) {
-        const value = address.address.toLowerCase();
-
-        if (
-          value === "::1" ||
-          value.startsWith("fc") ||
-          value.startsWith("fd") ||
-          value.startsWith("fe80:")
-        ) {
-          return false;
-        }
+      if (record.family === 6 && isPrivateIPv6(record.address)) {
+        return true;
       }
     }
 
-    return true;
-  } catch {
     return false;
+  } catch {
+    return true;
   }
 }
 
-function validateUrl(value) {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error("URL is required");
+async function validateUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") {
+    throw new Error("URL is required.");
   }
 
-  if (value.length > 4000) {
-    throw new Error("URL is too long");
-  }
-
-  let parsed;
+  let url;
 
   try {
-    parsed = new URL(value.trim());
+    url = new URL(rawUrl.trim());
   } catch {
-    throw new Error("Invalid URL");
+    throw new Error("Please enter a valid URL.");
   }
 
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error(
-      "Only HTTP and HTTPS URLs are allowed"
-    );
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Only HTTP and HTTPS URLs are supported.");
   }
 
-  return parsed;
+  if (await isBlockedHost(url.hostname)) {
+    throw new Error("This URL cannot be accessed safely.");
+  }
+
+  return url;
 }
 
-// --------------------------------------------------
-// RATE LIMIT
-// --------------------------------------------------
-
-function rateLimit(req, res, next) {
-  const ip = getClientIp(req);
+function checkRateLimit(ip) {
   const now = Date.now();
 
-  let record = rateStore.get(ip);
+  let record = rateMap.get(ip);
 
-  if (
-    !record ||
-    now - record.start > RATE_WINDOW_MS
-  ) {
+  if (!record || now - record.start > RATE_WINDOW) {
     record = {
       start: now,
       count: 0
     };
+
+    rateMap.set(ip, record);
   }
 
-  record.count += 1;
+  record.count++;
 
-  rateStore.set(ip, record);
-
-  if (record.count > RATE_LIMIT) {
-    return res.status(429).json({
-      ok: false,
-      error:
-        "Too many requests. Please try again later."
-    });
-  }
-
-  next();
+  return record.count <= RATE_LIMIT;
 }
 
-// --------------------------------------------------
-// ACTIVE DOWNLOAD LIMIT
-// --------------------------------------------------
+function acquireDownload(ip) {
+  const count = activeMap.get(ip) || 0;
 
-function incrementActive(ip) {
-  const current = activeDownloads.get(ip) || 0;
-
-  if (current >= MAX_ACTIVE_PER_IP) {
+  if (count >= MAX_ACTIVE_PER_IP) {
     return false;
   }
 
-  activeDownloads.set(ip, current + 1);
-
+  activeMap.set(ip, count + 1);
   return true;
 }
 
-function decrementActive(ip) {
-  const current = activeDownloads.get(ip) || 0;
+function releaseDownload(ip) {
+  const count = activeMap.get(ip) || 0;
 
-  if (current <= 1) {
-    activeDownloads.delete(ip);
+  if (count <= 1) {
+    activeMap.delete(ip);
   } else {
-    activeDownloads.set(ip, current - 1);
+    activeMap.set(ip, count - 1);
   }
 }
 
-// --------------------------------------------------
-// TIMEOUT
-// --------------------------------------------------
+function withTimeout(promise, ms, message) {
+  let timer;
 
-function createTimeout(ms) {
-  const controller = new AbortController();
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, ms);
+  });
 
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, ms);
-
-  return {
-    controller,
-
-    clear() {
-      clearTimeout(timer);
-    }
-  };
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    timeout
+  ]);
 }
 
-// --------------------------------------------------
-// FILENAME
-// --------------------------------------------------
+function filenameFromUrl(url, contentType = "") {
+  let name = "";
 
-function filenameFromUrl(url, contentType) {
   try {
-    const parsed = new URL(url);
-
-    const parts = parsed.pathname
-      .split("/")
-      .filter(Boolean);
-
-    const lastPart = parts[parts.length - 1] || "";
-
-    const decoded = decodeURIComponent(lastPart);
-
-    if (
-      decoded &&
-      /^[a-zA-Z0-9._-]+$/.test(decoded)
-    ) {
-      return decoded.slice(0, 150);
-    }
+    name = decodeURIComponent(
+      path.basename(new URL(url).pathname)
+    );
   } catch {}
 
-  const extensionMap = {
-    "video/mp4": "mp4",
-    "video/webm": "webm",
-    "video/quicktime": "mov",
-    "video/x-matroska": "mkv",
+  name = name.replace(/[^a-zA-Z0-9._-]/g, "_");
 
-    "audio/mpeg": "mp3",
-    "audio/mp4": "m4a",
-    "audio/wav": "wav",
-    "audio/webm": "webm",
+  if (!name || name === "." || name.length < 2) {
+    if (contentType.startsWith("video/")) {
+      return "quicksave-video.mp4";
+    }
 
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/webp": "webp",
-    "image/gif": "gif"
-  };
+    if (contentType.startsWith("audio/")) {
+      return "quicksave-audio";
+    }
 
-  const extension =
-    extensionMap[contentType] || "bin";
+    return "quicksave-media";
+  }
 
-  return `quicksave.${extension}`;
+  return name.slice(0, 180);
 }
-
-// --------------------------------------------------
-// CONTENT TYPE
-// --------------------------------------------------
 
 function getContentType(response) {
   return (
-    response.headers.get("content-type") || ""
+    response.headers.get("content-type") ||
+    ""
   )
     .split(";")[0]
     .trim()
     .toLowerCase();
 }
 
-// --------------------------------------------------
-// SAFE FETCH WITH REDIRECT PROTECTION
-// --------------------------------------------------
-
-async function fetchSafe(url, options = {}) {
-  let currentUrl = url;
-
-  for (
-    let redirectCount = 0;
-    redirectCount <= MAX_REDIRECTS;
-    redirectCount++
-  ) {
-    const parsed = validateUrl(currentUrl);
-
-    const safe = await isSafeHostname(
-      parsed.hostname
-    );
-
-    if (!safe) {
-      throw new Error(
-        "Blocked destination"
-      );
-    }
-
-    const timeout = createTimeout(
-      options.timeoutMs ||
-        INSPECT_TIMEOUT_MS
-    );
-
-    try {
-      const method =
-        options.method || "GET";
-
-      const response = await fetch(
-        currentUrl,
-        {
-          method,
-          redirect: "manual",
-          signal: timeout.controller.signal,
-
-          headers: {
-            "User-Agent":
-              "QuickSave/2.0",
-            Accept: "*/*"
-          }
-        }
-      );
-
-      if (
-        [301, 302, 303, 307, 308].includes(
-          response.status
-        )
-      ) {
-        const location =
-          response.headers.get(
-            "location"
-          );
-
-        if (!location) {
-          throw new Error(
-            "Redirect without location"
-          );
-        }
-
-        currentUrl = new URL(
-          location,
-          currentUrl
-        ).toString();
-
-        continue;
-      }
-
-      return {
-        response,
-        finalUrl: currentUrl
-      };
-    } finally {
-      timeout.clear();
-    }
-  }
-
-  throw new Error(
-    "Too many redirects"
-  );
-}
-
-// --------------------------------------------------
-// INSPECT MEDIA
-// --------------------------------------------------
-
-async function inspectMedia(url) {
-  let result;
+function detectSocialPlatform(rawUrl) {
+  let hostname;
 
   try {
-    result = await fetchSafe(
-      url,
-      {
-        method: "HEAD",
-        timeoutMs:
-          INSPECT_TIMEOUT_MS
-      }
-    );
-
-    if (
-      result.response.status >= 400 ||
-      !result.response.ok
-    ) {
-      throw new Error(
-        "HEAD request failed"
-      );
-    }
+    hostname = new URL(rawUrl).hostname
+      .toLowerCase()
+      .replace(/^www\./, "");
   } catch {
-    result = await fetchSafe(
-      url,
-      {
-        method: "GET",
-        timeoutMs:
-          INSPECT_TIMEOUT_MS
-      }
-    );
-  }
-
-  const response =
-    result.response;
-
-  const type =
-    getContentType(response);
-
-  if (!allowedTypes.has(type)) {
-    throw new Error(
-      `Unsupported media type: ${
-        type || "unknown"
-      }`
-    );
-  }
-
-  const contentLengthHeader =
-    response.headers.get(
-      "content-length"
-    );
-
-  let size = null;
-
-  if (contentLengthHeader) {
-    const parsedSize =
-      Number(contentLengthHeader);
-
-    if (
-      Number.isFinite(parsedSize) &&
-      parsedSize >= 0
-    ) {
-      size = parsedSize;
-    }
+    return null;
   }
 
   if (
-    size !== null &&
-    size > MAX_BYTES
+    hostname === "instagram.com" ||
+    hostname.endsWith(".instagram.com")
   ) {
-    throw new Error(
-      "File is larger than the 250 MB limit"
+    return "Instagram";
+  }
+
+  if (
+    hostname === "facebook.com" ||
+    hostname.endsWith(".facebook.com") ||
+    hostname === "fb.watch"
+  ) {
+    return "Facebook";
+  }
+
+  if (
+    hostname === "youtube.com" ||
+    hostname === "youtu.be" ||
+    hostname.endsWith(".youtube.com")
+  ) {
+    return "YouTube";
+  }
+
+  if (
+    hostname === "tiktok.com" ||
+    hostname.endsWith(".tiktok.com")
+  ) {
+    return "TikTok";
+  }
+
+  return null;
+}
+
+function looksLikeDirectMediaUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+
+    const pathname = url.pathname.toLowerCase();
+
+    return /\.(mp4|webm|mov|mkv|mp3|m4a|wav|jpg|jpeg|png|webp|gif)$/i.test(
+      pathname
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function fetchSafe(
+  initialUrl,
+  options = {},
+  redirectCount = 0
+) {
+  if (redirectCount > MAX_REDIRECTS) {
+    throw new Error("Too many redirects.");
+  }
+
+  const url = await validateUrl(initialUrl);
+
+  const response = await fetch(url, {
+    ...options,
+    redirect: "manual",
+    headers: {
+      "User-Agent": "QuickSave/2.1",
+      "Accept": "*/*",
+      ...(options.headers || {})
+    },
+    signal: options.signal
+  });
+
+  if (
+    [301, 302, 303, 307, 308].includes(response.status)
+  ) {
+    const location = response.headers.get("location");
+
+    if (!location) {
+      throw new Error("Redirect location missing.");
+    }
+
+    const nextUrl = new URL(location, url).toString();
+
+    return fetchSafe(
+      nextUrl,
+      options,
+      redirectCount + 1
     );
   }
 
-  return {
-    mediaUrl: result.finalUrl,
-    type,
-    size,
-    filename:
-      filenameFromUrl(
-        result.finalUrl,
-        type
-      )
-  };
+  return response;
 }
 
-// --------------------------------------------------
-// EXPRESS SETTINGS
-// --------------------------------------------------
+async function inspectMedia(rawUrl) {
+  const url = await validateUrl(rawUrl);
 
-app.disable("x-powered-by");
+  const platform = detectSocialPlatform(url.toString());
 
-app.use(
-  express.json({
-    limit: "32kb"
-  })
-);
+  /*
+   * Social-media page URLs are intentionally detected separately.
+   * We do not attempt to bypass login, private content, DRM,
+   * signed URLs or platform protections.
+   */
+  if (
+    platform &&
+    !looksLikeDirectMediaUrl(url.toString())
+  ) {
+    return {
+      ok: false,
+      type: "social-page",
+      platform,
+      message:
+        `${platform} page URL detected. ` +
+        `This QuickSave version accepts direct/public media URLs. ` +
+        `For protected platform content, use the platform's official export/download or an authorized API.`
+    };
+  }
 
-// --------------------------------------------------
-// HEALTH CHECK
-// --------------------------------------------------
+  const controller = new AbortController();
 
-app.get(
-  "/health",
-  (req, res) => {
-    const active =
-      Array.from(
-        activeDownloads.values()
-      ).reduce(
-        (sum, value) =>
-          sum + value,
-        0
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, INSPECT_TIMEOUT);
+
+  try {
+    let response;
+
+    try {
+      response = await fetchSafe(url.toString(), {
+        method: "HEAD",
+        signal: controller.signal
+      });
+    } catch {
+      response = null;
+    }
+
+    let contentType = response
+      ? getContentType(response)
+      : "";
+
+    let contentLength = response
+      ? Number(
+          response.headers.get("content-length") || 0
+        )
+      : 0;
+
+    /*
+     * Some servers don't support HEAD.
+     * Try a tiny GET instead.
+     */
+    if (
+      !response ||
+      !response.ok ||
+      !contentType
+    ) {
+      response = await fetchSafe(url.toString(), {
+        method: "GET",
+        headers: {
+          Range: "bytes=0-0"
+        },
+        signal: controller.signal
+      });
+
+      contentType = getContentType(response);
+
+      contentLength = Number(
+        response.headers.get("content-length") || 0
       );
 
-    res.json({
+      try {
+        await response.body?.cancel();
+      } catch {}
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        type: "error",
+        message:
+          `The server returned HTTP ${response.status}.`
+      };
+    }
+
+    if (!ALLOWED_MIME.has(contentType)) {
+      return {
+        ok: false,
+        type: "unsupported",
+        contentType,
+        message:
+          "This URL does not point to a supported public media file."
+      };
+    }
+
+    if (
+      contentLength &&
+      contentLength > MAX_BYTES
+    ) {
+      return {
+        ok: false,
+        type: "too-large",
+        message:
+          "This media file is larger than the 250 MB limit."
+      };
+    }
+
+    return {
       ok: true,
-      service: "quicksave",
-      uptime: Math.round(
-        process.uptime()
-      ),
-      active
+      type: "media",
+      url: url.toString(),
+      contentType,
+      size: contentLength || null,
+      filename: filenameFromUrl(
+        url.toString(),
+        contentType
+      )
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "QuickSave",
+    version: "2.1"
+  });
+});
+
+app.post("/api/inspect", async (req, res) => {
+  const ip = cleanIp(
+    req.headers["x-forwarded-for"] ||
+      req.socket.remoteAddress
+  );
+
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({
+      ok: false,
+      message:
+        "Too many requests. Please wait a moment and try again."
     });
   }
-);
 
-// --------------------------------------------------
-// INSPECT API
-// --------------------------------------------------
+  try {
+    const result = await inspectMedia(req.body?.url);
 
-app.post(
-  "/api/inspect",
-  rateLimit,
-  async (req, res) => {
-    try {
-      const parsed =
-        validateUrl(
-          req.body?.url
-        );
+    if (!result.ok) {
+      return res.status(400).json(result);
+    }
 
-      const safe =
-        await isSafeHostname(
-          parsed.hostname
-        );
+    return res.json(result);
+  } catch (error) {
+    console.error("Inspect error:", error);
 
-      if (!safe) {
-        return res.status(400).json({
-          ok: false,
-          error:
-            "This destination is not allowed."
-        });
-      }
+    return res.status(400).json({
+      ok: false,
+      type: "error",
+      message:
+        error.message ||
+        "Unable to process this URL."
+    });
+  }
+});
 
-      const media =
-        await inspectMedia(
-          parsed.toString()
-        );
+app.get("/api/download", async (req, res) => {
+  const ip = cleanIp(
+    req.headers["x-forwarded-for"] ||
+      req.socket.remoteAddress
+  );
 
-      return res.json({
-        ok: true,
-        ...media
-      });
-    } catch (error) {
-      console.error(
-        "Inspect error:",
-        error.message
-      );
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({
+      ok: false,
+      message:
+        "Too many requests. Please wait a moment and try again."
+    });
+  }
 
+  if (!acquireDownload(ip)) {
+    return res.status(429).json({
+      ok: false,
+      message:
+        "Too many downloads are running from this connection. Please wait."
+    });
+  }
+
+  try {
+    const rawUrl = req.query.url;
+
+    const url = await validateUrl(rawUrl);
+
+    const platform = detectSocialPlatform(
+      url.toString()
+    );
+
+    if (
+      platform &&
+      !looksLikeDirectMediaUrl(url.toString())
+    ) {
       return res.status(400).json({
         ok: false,
-        error:
-          error.message ||
-          "Unable to inspect this media."
-      });
-    }
-  }
-);
-
-// --------------------------------------------------
-// DOWNLOAD API
-// --------------------------------------------------
-
-app.get(
-  "/api/download",
-  rateLimit,
-  async (req, res) => {
-    const ip =
-      getClientIp(req);
-
-    if (!incrementActive(ip)) {
-      return res.status(429).json({
-        ok: false,
-        error:
-          "Too many downloads are running from this connection."
+        type: "social-page",
+        platform,
+        message:
+          `${platform} page URLs cannot be converted here. ` +
+          `Use a direct/public media URL or an authorized official API flow.`
       });
     }
 
-    let released = false;
+    const controller = new AbortController();
 
-    const release = () => {
-      if (!released) {
-        released = true;
-        decrementActive(ip);
-      }
-    };
-
-    res.on("close", release);
-    res.on("finish", release);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, DOWNLOAD_TIMEOUT);
 
     try {
-      const parsed =
-        validateUrl(
-          req.query?.url
-        );
+      const response = await fetchSafe(
+        url.toString(),
+        {
+          method: "GET",
+          signal: controller.signal
+        }
+      );
 
-      const safe =
-        await isSafeHostname(
-          parsed.hostname
-        );
-
-      if (!safe) {
-        release();
-
+      if (!response.ok) {
         return res.status(400).json({
           ok: false,
-          error:
-            "This destination is not allowed."
+          message:
+            `Media server returned HTTP ${response.status}.`
         });
       }
 
-      const result =
-        await fetchSafe(
-          parsed.toString(),
-          {
-            method: "GET",
-            timeoutMs:
-              DOWNLOAD_TIMEOUT_MS
-          }
-        );
+      const contentType =
+        getContentType(response);
 
-      const upstream =
-        result.response;
-
-      if (!upstream.ok) {
-        release();
-
-        return res.status(
-          upstream.status
-        ).json({
+      if (!ALLOWED_MIME.has(contentType)) {
+        return res.status(400).json({
           ok: false,
-          error:
-            `Upstream server returned ${upstream.status}`
+          message:
+            "The URL does not point to supported media."
         });
       }
 
-      const type =
-        getContentType(
-          upstream
-        );
-
-      if (!allowedTypes.has(type)) {
-        release();
-
-        return res.status(415).json({
-          ok: false,
-          error:
-            "Unsupported media type."
-        });
-      }
-
-      const contentLengthHeader =
-        upstream.headers.get(
-          "content-length"
-        );
-
-      let expectedSize = null;
-
-      if (contentLengthHeader) {
-        const parsedSize =
-          Number(
-            contentLengthHeader
-          );
-
-        if (
-          Number.isFinite(
-            parsedSize
-          ) &&
-          parsedSize >= 0
-        ) {
-          expectedSize =
-            parsedSize;
-        }
-      }
+      const contentLength = Number(
+        response.headers.get("content-length") || 0
+      );
 
       if (
-        expectedSize !== null &&
-        expectedSize > MAX_BYTES
+        contentLength &&
+        contentLength > MAX_BYTES
       ) {
-        release();
-
         return res.status(413).json({
           ok: false,
-          error:
-            "File is larger than the 250 MB limit."
+          message:
+            "This file is larger than the 250 MB limit."
         });
       }
 
-      const filename =
-        filenameFromUrl(
-          result.finalUrl,
-          type
-        );
+      const filename = filenameFromUrl(
+        url.toString(),
+        contentType
+      );
 
       res.statusCode = 200;
 
       res.setHeader(
         "Content-Type",
-        type
+        contentType
       );
 
       res.setHeader(
@@ -740,200 +633,108 @@ app.get(
         "no-store"
       );
 
-      if (
-        expectedSize !== null
-      ) {
+      if (contentLength) {
         res.setHeader(
           "Content-Length",
-          String(expectedSize)
+          String(contentLength)
         );
       }
 
-      if (!upstream.body) {
+      let total = 0;
+
+      if (!response.body) {
         throw new Error(
-          "Upstream response has no body"
+          "Media stream unavailable."
         );
       }
 
-      const reader =
-        upstream.body.getReader();
+      for await (const chunk of response.body) {
+        total += chunk.length;
 
-      let totalBytes = 0;
+        if (total > MAX_BYTES) {
+          controller.abort();
 
-      try {
-        while (true) {
-          const { done, value } =
-            await reader.read();
-
-          if (done) {
-            break;
+          if (!res.headersSent) {
+            return res.status(413).json({
+              ok: false,
+              message:
+                "Download exceeded the 250 MB limit."
+            });
           }
 
-          totalBytes +=
-            value.byteLength;
-
-          if (
-            totalBytes >
-            MAX_BYTES
-          ) {
-            try {
-              await reader.cancel();
-            } catch {}
-
-            if (!res.headersSent) {
-              res.status(413).json({
-                ok: false,
-                error:
-                  "File exceeded the 250 MB limit."
-              });
-            } else {
-              res.destroy(
-                new Error(
-                  "File exceeded size limit"
-                )
-              );
-            }
-
-            return;
-          }
-
-          const canContinue =
-            res.write(
-              Buffer.from(value)
-            );
-
-          if (!canContinue) {
-            await new Promise(
-              (resolve) => {
-                res.once(
-                  "drain",
-                  resolve
-                );
-              }
-            );
-          }
+          res.destroy();
+          return;
         }
 
-        res.end();
-      } catch (streamError) {
-        console.error(
-          "Download stream error:",
-          streamError.message
-        );
-
-        if (!res.destroyed) {
-          res.destroy(
-            streamError
+        if (!res.write(chunk)) {
+          await new Promise((resolve) =>
+            res.once("drain", resolve)
           );
         }
       }
-    } catch (error) {
-      console.error(
-        "Download error:",
-        error.message
-      );
 
-      if (!res.headersSent) {
-        res.status(400).json({
-          ok: false,
-          error:
-            error.message ||
-            "Unable to download this media."
-        });
-      } else if (
-        !res.destroyed
-      ) {
-        res.destroy(error);
-      }
+      res.end();
     } finally {
-      release();
+      clearTimeout(timer);
     }
+  } catch (error) {
+    console.error("Download error:", error);
+
+    if (!res.headersSent) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          error.name === "AbortError"
+            ? "Download timed out."
+            : error.message ||
+              "Unable to download this media."
+      });
+    }
+
+    res.destroy();
+  } finally {
+    releaseDownload(ip);
   }
+});
+
+app.use(
+  express.static(PUBLIC_DIR, {
+    extensions: ["html"]
+  })
 );
 
-// --------------------------------------------------
-// STATIC WEBSITE
-// --------------------------------------------------
-
-const publicDir =
-  path.join(
-    __dirname,
-    "public"
+/*
+ * Express 5 safe fallback.
+ * Do NOT use app.get("*", ...) here.
+ */
+app.use((req, res) => {
+  res.sendFile(
+    path.join(PUBLIC_DIR, "index.html")
   );
+});
 
-app.use(
-  express.static(
-    publicDir,
-    {
-      extensions: ["html"]
-    }
-  )
-);
+app.use((err, req, res, next) => {
+  console.error("Server error:", err);
 
-// --------------------------------------------------
-// EXPRESS 5 SAFE FALLBACK
-// IMPORTANT: DO NOT USE app.get("*")
-// --------------------------------------------------
+  if (res.headersSent) {
+    return next(err);
+  }
 
-app.use(
-  (req, res) => {
-    res.sendFile(
-      path.join(
-        publicDir,
-        "index.html"
-      )
+  res.status(500).json({
+    ok: false,
+    message: "Internal server error."
+  });
+});
+
+const server = app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `QuickSave running on port ${PORT}`
     );
   }
 );
-
-// --------------------------------------------------
-// ERROR HANDLER
-// --------------------------------------------------
-
-app.use(
-  (
-    error,
-    req,
-    res,
-    next
-  ) => {
-    console.error(
-      "Express error:",
-      error
-    );
-
-    if (
-      res.headersSent
-    ) {
-      return next(error);
-    }
-
-    res.status(500).json({
-      ok: false,
-      error:
-        "Internal server error"
-    });
-  }
-);
-
-// --------------------------------------------------
-// START SERVER
-// --------------------------------------------------
-
-const server =
-  app.listen(
-    PORT,
-    "0.0.0.0",
-    () => {
-      console.log(
-        `QuickSave server running on port ${PORT}`
-      );
-    }
-  );
-
-// --------------------------------------------------
-// GRACEFUL SHUTDOWN
-// --------------------------------------------------
 
 function shutdown(signal) {
   console.log(
@@ -941,52 +742,32 @@ function shutdown(signal) {
   );
 
   server.close(() => {
-    console.log(
-      "Server closed."
-    );
-
     process.exit(0);
   });
 
   setTimeout(() => {
-    console.error(
-      "Forced shutdown."
-    );
-
     process.exit(1);
   }, 10000).unref();
 }
 
-process.on(
-  "SIGTERM",
-  () => shutdown("SIGTERM")
+process.on("SIGTERM", () =>
+  shutdown("SIGTERM")
 );
 
-process.on(
-  "SIGINT",
-  () => shutdown("SIGINT")
+process.on("SIGINT", () =>
+  shutdown("SIGINT")
 );
 
-// --------------------------------------------------
-// ERROR PROTECTION
-// --------------------------------------------------
+process.on("uncaughtException", (error) => {
+  console.error(
+    "Uncaught exception:",
+    error
+  );
+});
 
-process.on(
-  "uncaughtException",
-  (error) => {
-    console.error(
-      "Uncaught exception:",
-      error
-    );
-  }
-);
-
-process.on(
-  "unhandledRejection",
-  (reason) => {
-    console.error(
-      "Unhandled rejection:",
-      reason
-    );
-  }
-);
+process.on("unhandledRejection", (error) => {
+  console.error(
+    "Unhandled rejection:",
+    error
+  );
+});
