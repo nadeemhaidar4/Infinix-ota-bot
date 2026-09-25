@@ -4,14 +4,22 @@ let room = "";
 let isAlive = true;
 let userCapacity = 4;
 
-const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4";
+const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4"; 
 let rtcClient;
 let localAudioTrack;
 
 let currentTimerInterval;
 let currentTimeout;
 
+// Unique ID for Live Count
 const myClientId = Math.random().toString(36).substring(2, 15);
+
+// Ensure audio works by resuming Audio Context
+async function resumeAudio() {
+    if (rtcClient && rtcClient.getAudioContext().state === 'suspended') {
+        await rtcClient.getAudioContext().resume();
+    }
+}
 
 // --- Sound Function ---
 function playSound(type) {
@@ -42,6 +50,7 @@ window.onload = fetchActiveUsers;
 setInterval(fetchActiveUsers, 5000);
 
 async function joinRoom(mode) {
+    playSound('click');
     username = document.getElementById("username").value.trim();
     userCapacity = document.getElementById("capacity-select").value;
     
@@ -50,7 +59,7 @@ async function joinRoom(mode) {
     const joinSection = document.getElementById("join-section");
 
     if (mode === 'random') {
-        joinSection.innerHTML = '<p class="text-blue-400 font-bold text-xl animate-pulse text-center mt-10">Searching for match...</p>';
+        joinSection.innerHTML = '<p class="text-blue-400 font-bold text-xl animate-pulse text-center mt-6">Searching for match...</p>';
         try {
             const response = await fetch(`/get_random_room/${userCapacity}`);
             const data = await response.json();
@@ -58,7 +67,7 @@ async function joinRoom(mode) {
         } catch (error) { return alert("Server error!"); }
     } 
     else if (mode === 'create') {
-        joinSection.innerHTML = '<p class="text-blue-400 font-bold text-xl animate-pulse text-center mt-10">Creating Room...</p>';
+        joinSection.innerHTML = '<p class="text-blue-400 font-bold text-xl animate-pulse text-center mt-6">Creating Room...</p>';
         try {
             const response = await fetch('/create_new_room');
             const data = await response.json();
@@ -90,6 +99,7 @@ async function joinRoom(mode) {
         await initAgora(room, username);
     } catch (err) {
         console.error("Agora Error: ", err);
+        alert("Please enable microphone permissions in your browser.");
         updateMicUI(false);
     }
 }
@@ -99,7 +109,10 @@ async function initAgora(channelName, uid) {
     
     rtcClient.on("user-published", async (user, mediaType) => {
         await rtcClient.subscribe(user, mediaType);
-        if (mediaType === "audio") user.audioTrack.play();
+        if (mediaType === "audio") {
+            await resumeAudio();
+            user.audioTrack.play();
+        }
     });
 
     await rtcClient.join(AGORA_APP_ID, channelName, null, uid);
@@ -111,6 +124,7 @@ async function initAgora(channelName, uid) {
 }
 
 async function toggleMic() {
+    playSound('click');
     if (!localAudioTrack) {
         try {
             localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
@@ -261,6 +275,7 @@ function handleServerMessage(data) {
 }
 
 function sendChat() {
+    playSound('click');
     const input = document.getElementById("chat-input");
     if (input.value.trim() !== "") {
         ws.send(JSON.stringify({ action: "chat", text: input.value }));
@@ -280,6 +295,7 @@ function castVote(player) {
 }
 
 function leaveGame() {
+    playSound('click');
     if(confirm("Are you sure you want to leave the game?")) {
         window.location.reload();
     }
