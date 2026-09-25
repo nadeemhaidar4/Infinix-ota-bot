@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Who Is The Spy</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.24.8.js"></script>
+<style>
+:root{--blue1:#2da4f7;--blue2:#1166bf;--blue3:#0b438f;--panel:rgba(10,68,138,.72);--panelDark:rgba(4,38,88,.82);--cyan:#4cc9ff;--orange:#ffae2b;--yellow:#ffd44e;--green:#35d56a;--red:#ff4d56;--white:#fff}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden}
+body{font-family:"Nunito",sans-serif;color:#fff;background:radial-gradient(circle at 50% -10%,#4ebeff 0,#1878d4 32%,#0c4794 72%,#07356f 100%)}
+button,input,select{font:inherit}button{border:0;cursor:pointer}.hidden{display:none!important}
+#app{width:100%;height:100%;display:flex;justify-content:center}
+.app-shell{width:100%;max-width:470px;height:100%;position:relative;overflow:hidden;background:radial-gradient(circle at 50% -10%,rgba(78,190,255,.9) 0,rgba(24,120,212,.75) 32%,rgba(12,71,148,.95) 72%,#07356f 100%)}
+/* HOME */
+#lobby-screen{height:100%;display:flex;align-items:center;justify-content:center;padding:18px 14px}
+.home-content{width:100%;max-width:420px}
+.logo{text-align:center;margin:4px 0 18px;text-shadow:0 4px 10px rgba(0,0,0,.22)}
+.logo .tiny{display:block;font-size:18px;font-weight:900;letter-spacing:2px}.logo b{display:block;font-family:Fredoka,sans-serif;font-size:58px;line-height:.94;color:#ffd44e;letter-spacing:1px}.logo .spy{color:#fff}
+.home-card{background:rgba(4,48,105,.77);border:1px solid rgba(255,255,255,.16);border-radius:28px;padding:22px;box-shadow:0 18px 45px rgba(0,26,69,.35);backdrop-filter:blur(9px)}
+.home-card h2{margin:0 0 15px;font-size:23px;text-align:center}.home-card label{font-size:12px;font-weight:800;opacity:.85;display:block;margin:9px 0 3px}.home-card input,.home-card select{width:100%;padding:13px 15px;border-radius:16px;border:1px solid rgba(255,255,255,.2);outline:none;background:rgba(255,255,255,.12);color:#fff}.home-card input::placeholder{color:rgba(255,255,255,.7)}.home-card select option{color:#111}.home-card .split{display:grid;grid-template-columns:1fr 120px;gap:9px}.join-row{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.join-btn{width:100%;padding:14px;border-radius:28px;font-weight:900;font-size:16px;background:linear-gradient(#ffcf43,#ef9f10);color:#fff;box-shadow:0 4px 0 #a76a03}.secondary-btn{width:100%;padding:13px;border-radius:28px;font-weight:900;font-size:15px;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.17)}.home-hint{margin:12px 0 0;text-align:center;font-size:12px;opacity:.68;line-height:1.45}.online{margin-top:9px;text-align:center;font-size:12px;color:#dff5ff}
+.mode-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.mode-btn{padding:11px;border-radius:14px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);color:#dceeff;font-weight:800}.mode-btn.selected{background:#1a83db;border-color:#62c1ff;color:#fff}
+.loading{min-height:20px;text-align:center;font-size:12px;margin-top:7px;color:#ffe58b}
+/* GAME */
+#game-screen{height:100%;display:flex;flex-direction:column;position:relative;background:radial-gradient(circle at 50% -12%,#4ebeff 0,#1878d4 31%,#0c4794 72%,#07356f 100%);overflow:hidden}
+#game-screen:before{content:"⚙  ⚙  ⚙";position:absolute;top:83px;left:50%;transform:translateX(-50%);font-size:80px;letter-spacing:28px;opacity:.065;pointer-events:none;white-space:nowrap}
+.game-top{height:82px;display:grid;grid-template-columns:44px 1fr 44px 44px;align-items:center;gap:5px;padding:7px 8px;position:relative;z-index:2}.top-icon{width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.08);color:#fff;font-size:23px}.room-box{text-align:center;background:linear-gradient(#54b3f5,#318ddd);border-radius:18px;padding:8px 8px;box-shadow:0 5px 0 #1f71b8;min-width:0}.room-code{font-size:18px;font-weight:900;line-height:1.05}.category-line{font-size:13px;font-weight:900;margin-top:2px;color:#fff}.category-line .muted{opacity:.75;font-weight:700}.round-line{font-size:10px;font-weight:900;color:#ffe27d;margin-top:2px}
+.status-banner{min-height:28px;padding:4px 10px;text-align:center;font-size:12px;font-weight:800;color:#fff;opacity:.95;position:relative;z-index:2}.turn-pill{position:absolute;left:11px;top:86px;padding:8px 13px;border-radius:22px;background:rgba(255,255,255,.13);font-size:14px;font-weight:900;z-index:2}.turn-pill b{color:#ffe27d}
+.game-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:46px 12px 0;position:relative;z-index:1}.players-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;align-content:start;max-width:430px;width:100%;margin:0 auto;padding:4px 8px}.player{min-height:112px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;position:relative}.avatar-wrap{position:relative}.avatar{width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:3px solid rgba(255,255,255,.9);background:linear-gradient(145deg,#7790a4,#3b4c5a);font-family:Fredoka,sans-serif;font-size:31px;font-weight:800;box-shadow:0 6px 16px rgba(0,0,0,.2)}.player.speaking .avatar{border-color:#ffd12b;box-shadow:0 0 0 6px rgba(255,209,43,.22),0 6px 16px rgba(0,0,0,.22);animation:pulse 1s infinite}.player.dead{opacity:.35;filter:grayscale(1)}.number-badge{position:absolute;left:-6px;top:-5px;width:24px;height:24px;border-radius:50%;background:#2387d9;color:#fff;border:2px solid #fff;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center}.ready-badge{position:absolute;right:-5px;bottom:-3px;width:23px;height:23px;border-radius:50%;background:#2bd56a;color:#fff;border:2px solid #fff;font-size:12px;display:flex;align-items:center;justify-content:center}.mic-badge{position:absolute;right:-5px;top:-4px;width:24px;height:24px;border-radius:50%;background:#ffb919;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:12px}.player-name{max-width:130px;margin-top:5px;font-size:14px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.player-state{font-size:10px;color:#ffe071;font-weight:800;margin-top:2px}
+.chat-wrap{flex:1;min-height:90px;max-height:195px;margin:6px 0 7px;background:rgba(4,43,93,.48);border-radius:18px;padding:8px;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,.08)}.messages{flex:1;min-height:0;overflow:auto;padding:3px 5px}.message{font-size:12px;line-height:1.38;padding:2px 0;word-break:break-word}.message .sender{font-weight:900;color:#ffe37e}.message.system{color:#ffe37e;font-weight:800}.message.reaction{font-size:14px}.chat-row{display:grid;grid-template-columns:1fr 50px;gap:6px;margin-top:5px}.chat-row input{width:100%;padding:11px 12px;border-radius:15px;border:1px solid rgba(255,255,255,.15);outline:none;background:rgba(255,255,255,.10);color:#fff}.chat-row input::placeholder{color:rgba(255,255,255,.7)}.chat-send{border-radius:15px;background:#ffbd25;color:#fff;font-size:18px}
+.game-footer{height:68px;display:flex;align-items:center;justify-content:space-between;padding:7px 24px;position:relative;z-index:4;background:linear-gradient(transparent,rgba(5,39,86,.23))}.round-btn{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.10);color:#fff;font-size:22px;box-shadow:0 4px 10px rgba(0,0,0,.12)}.round-btn.active{background:#23cf68;box-shadow:0 0 0 6px rgba(35,207,104,.16)}.round-btn.disabled{opacity:.45}
+.reaction-panel{position:absolute;right:82px;bottom:68px;background:rgba(4,48,98,.95);padding:8px;border-radius:18px;border:1px solid rgba(255,255,255,.12);display:flex;gap:4px;z-index:7;box-shadow:0 10px 25px rgba(0,0,0,.25)}.reaction-panel button{background:transparent;color:#fff;font-size:23px;padding:6px}
+.voice-hint{position:absolute;left:50%;bottom:77px;transform:translateX(-50%);white-space:nowrap;font-size:10px;color:#ffe17a;opacity:.9;z-index:4}
+/* MODALS */
+.modal{position:fixed;inset:0;background:rgba(0,18,51,.72);display:flex;align-items:center;justify-content:center;padding:16px;z-index:20;backdrop-filter:blur(4px)}.modal-card{width:min(430px,94vw);background:#fff;color:#4c5965;border-radius:23px;padding:23px 20px;box-shadow:0 18px 45px rgba(0,20,55,.45);position:relative}.modal-card h2{margin:0 0 12px;text-align:center;font-size:26px;font-family:Fredoka,sans-serif;color:#555}.spy-art{text-align:center;font-size:58px;line-height:1;margin:-5px 0 2px}.timer-title{display:flex;justify-content:space-between;align-items:center}.timer-title h2{margin-bottom:0}.timer-title b{font-size:22px;color:#ef9655}.modal-sub{text-align:center;color:#8190a0;font-size:12px;margin:7px 0 13px}.ready-players{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin:10px 0 16px}.ready-chip{padding:9px;border-radius:14px;background:#f3f8fc;color:#4d6578;font-size:12px;font-weight:900}.ready-chip span{float:right}.ready-chip.ready{background:#e9fff0;color:#24814a}.category-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0 15px}.category-btn{min-height:55px;border-radius:28px;border:2px solid #e6edf3;background:#fafafa;color:#566674;font-weight:900;font-size:15px;padding:9px 8px}.category-btn.selected{border-color:#378ddd;background:#eef8ff;color:#1762aa}.category-btn .count{display:block;font-size:10px;color:#8ba0b1;margin-top:2px}.primary{width:100%;padding:13px 17px;border-radius:28px;background:linear-gradient(#ffcf43,#f19f0a);color:#fff;font-size:17px;font-weight:900;box-shadow:0 4px 0 #b67004}.primary.blue{background:linear-gradient(#3ca0f0,#2580cb);box-shadow:0 4px 0 #17619d}.primary:disabled{opacity:.55;pointer-events:none}.result-pill{display:inline-block;margin:8px auto 3px;border:2px solid #3c91e2;color:#1763a9;border-radius:60px;padding:12px 24px;font-family:Fredoka,sans-serif;font-size:30px;font-weight:800}.result-center{text-align:center}.result-count{color:#ee9658;font-size:18px;font-weight:900;margin-top:12px}.vote-title{color:#f04d53!important}.vote-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}.vote-btn{padding:13px 11px;border-radius:24px;background:#ffbd25;color:#fff;font-weight:900;font-size:14px}.vote-btn.selected{background:#1682d8}.vote-status{text-align:center;min-height:18px;color:#8595a4;font-size:12px;margin:6px 0}.event-card{text-align:center;padding-top:18px}.event-title{color:#1d65a9!important;font-size:29px!important}.event-text{font-size:19px;font-weight:900;color:#4d5c68;padding:17px 10px;margin:10px 0 15px;background:#f1f8fe;border-radius:16px}.gameover-title{text-align:center;font-family:Fredoka,sans-serif;font-size:34px;font-weight:900;color:#1763a9}.gameover-text{text-align:center;color:#667786;line-height:1.45}.reveal{background:#eef7ff;color:#17609d;border-radius:15px;padding:13px;margin:14px 0;font-size:13px;font-weight:900;text-align:center}.menu-card button{display:block;width:100%;padding:13px;margin:7px 0;border-radius:15px;background:#eef6fc;color:#1a6198;font-weight:900}.rules{max-height:82vh;overflow:auto}.rules p{line-height:1.55;color:#637587;font-size:14px}
+.toast{position:absolute;left:50%;top:114px;transform:translateX(-50%);background:rgba(0,0,0,.52);border:1px solid rgba(255,255,255,.08);padding:7px 11px;border-radius:14px;font-size:11px;opacity:0;pointer-events:none;z-index:9;transition:opacity .18s}.toast.show{opacity:1}
+.audio-unlock{position:absolute;inset:auto 12px 76px;z-index:6;background:rgba(4,48,98,.9);border:1px solid rgba(255,255,255,.18);padding:10px 12px;border-radius:14px;text-align:center;font-size:11px}.audio-unlock button{margin-top:6px;padding:8px 14px;border-radius:18px;background:#ffbd25;color:#fff;font-weight:900}
+@keyframes pulse{50%{transform:scale(1.045)}}
+@media(max-width:360px){.room-box{padding:7px}.players-grid{gap:8px 10px}.avatar{width:67px;height:67px}.player{min-height:103px}.game-footer{padding-left:17px;padding-right:17px}.round-btn{width:48px;height:48px}.voice-hint{font-size:9px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="app-shell">
+
+    <section id="lobby-screen">
+      <div class="home-content">
+        <div class="logo"><span class="tiny">WHO IS THE</span><b><span class="spy">SPY</span>?</b></div>
+        <div class="home-card">
+          <h2>Play with friends</h2>
+          <label for="username">Player name</label>
+          <input id="username" maxlength="20" autocomplete="nickname" placeholder="Enter your name">
+          <div class="split">
+            <div>
+              <label for="capacity">Players</label>
+              <select id="capacity"><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select>
+            </div>
+            <div>
+              <label for="room-code">Room ID</label>
+              <input id="room-code" inputmode="numeric" maxlength="4" placeholder="Optional">
+            </div>
+          </div>
+          <label>Game mode</label>
+          <div class="mode-row">
+            <button class="mode-btn selected" id="mode-spy" onclick="selectMode('spy')">🕵️ Spy</button>
+            <button class="mode-btn" id="mode-wordless" onclick="selectMode('spy')">🗣️ Classic</button>
+          </div>
+          <div class="join-row">
+            <button class="secondary-btn" onclick="joinRoom('random')">Random Room</button>
+            <button class="join-btn" onclick="joinRoom('create')">Create Room</button>
+          </div>
+          <button class="secondary-btn" style="margin-top:9px" onclick="joinRoom('join')">Join Room ID</button>
+          <div class="loading" id="loading-text"></div>
+          <div class="online">Online players: <b id="active-users-count">0</b></div>
+          <div class="home-hint">4–8 players • choose a category • describe your word • find the spy</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="game-screen" class="hidden">
+      <div class="game-top">
+        <button class="top-icon" onclick="toggleMenu()">☰</button>
+        <div class="room-box">
+          <div class="room-code">ROOM <span id="room-name">----</span></div>
+          <div class="category-line" id="category-line">Category: <span class="muted">Waiting</span></div>
+          <div class="round-line" id="round-line">Lobby</div>
+        </div>
+        <button class="top-icon" onclick="openRules()">?</button>
+        <button class="top-icon" onclick="showPlayerCount()">♙</button>
+      </div>
+      <div class="turn-pill">⏱ <b id="turn-timer">--</b>s</div>
+      <div class="status-banner" id="room-status">Connecting...</div>
+
+      <div class="game-body">
+        <div class="players-grid" id="players-grid"></div>
+        <div class="chat-wrap">
+          <div class="messages" id="messages"></div>
+          <div class="chat-row">
+            <input id="chat-input" maxlength="300" placeholder="Type a message...">
+            <button class="chat-send" onclick="sendChat()">➤</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="voice-hint" id="voice-hint">Mic turns ON automatically during your turn.</div>
+      <div id="audio-unlock" class="audio-unlock hidden">Tap once to enable voice playback.<br><button onclick="unlockAudio()">Enable Voice</button></div>
+      <div class="game-footer">
+        <button class="round-btn" id="sound-button" onclick="toggleSound()">🔊</button>
+        <button class="round-btn" id="mic-button" onclick="toggleMic()">🎤</button>
+        <button class="round-btn" onclick="toggleReactions()">😊</button>
+        <button class="round-btn" onclick="focusChat()">💬</button>
+      </div>
+      <div id="reaction-panel" class="reaction-panel hidden">
+        <button onclick="sendReaction('😂')">😂</button><button onclick="sendReaction('😭')">😭</button><button onclick="sendReaction('😡')">😡</button><button onclick="sendReaction('😱')">😱</button><button onclick="sendReaction('🤔')">🤔</button><button onclick="sendReaction('👏')">👏</button>
+      </div>
+      <div id="toast" class="toast"></div>
+    </section>
+
+    <div id="ready-overlay" class="modal hidden">
+      <div class="modal-card">
+        <div class="spy-art">🕵️</div>
+        <h2>Get ready</h2>
+        <div class="modal-sub" id="ready-status">Waiting for all players...</div>
+        <div id="ready-players" class="ready-players"></div>
+        <button id="ready-button" class="primary blue" onclick="toggleReady()">Get Ready</button>
+        <div class="modal-sub">Your Ready button also prepares your voice microphone.</div>
+      </div>
+    </div>
+
+    <div id="category-overlay" class="modal hidden">
+      <div class="modal-card">
+        <div class="spy-art">🕵️</div>
+        <div class="timer-title"><h2>Select a category</h2><b id="category-timer">9s</b></div>
+        <div class="modal-sub">Choose one. The most-voted category is used for this round.</div>
+        <div id="category-grid" class="category-grid"></div>
+        <button id="category-confirm" class="primary disabled" onclick="confirmCategory()">Confirm choice</button>
+      </div>
+    </div>
+
+    <div id="category-result-overlay" class="modal hidden">
+      <div class="modal-card result-center">
+        <div class="spy-art">🎯</div>
+        <h2>Categories of this round</h2>
+        <div id="chosen-category" class="result-pill">Life</div>
+        <div class="result-count"><span id="category-result-timer">3</span>s</div>
+      </div>
+    </div>
+
+    <div id="vote-overlay" class="modal hidden">
+      <div class="modal-card">
+        <div class="spy-art">🕵️</div>
+        <h2 class="vote-title">Who's The Spy?</h2>
+        <div class="modal-sub">Tap one alive player. You cannot vote yourself.</div>
+        <div id="vote-status" class="vote-status"></div>
+        <div id="vote-grid" class="vote-grid"></div>
+      </div>
+    </div>
+
+    <div id="event-overlay" class="modal hidden">
+      <div class="modal-card event-card">
+        <div class="spy-art">🕵️</div>
+        <h2 id="event-title" class="event-title">Elimination</h2>
+        <div id="event-text" class="event-text"></div>
+        <button class="primary blue" onclick="closeEvent()">Continue</button>
+      </div>
+    </div>
+
+    <div id="game-over-overlay" class="modal hidden">
+      <div class="modal-card">
+        <div id="gameover-title" class="gameover-title">CIVILIANS WIN!</div>
+        <p id="gameover-message" class="gameover-text"></p>
+        <div id="spy-reveal" class="reveal"></div>
+        <button class="primary" onclick="location.reload()">Back To Lobby</button>
+      </div>
+    </div>
+
+    <div id="menu-overlay" class="modal hidden">
+      <div class="modal-card menu-card">
+        <h2>Menu</h2>
+        <button onclick="openRules()">📖 Rules</button>
+        <button onclick="toggleSound()">🔊 Toggle sound</button>
+        <button onclick="requestMicrophone()">🎤 Enable microphone</button>
+        <button onclick="leaveGame()">🚪 Exit game</button>
+        <button onclick="hide('menu-overlay')">Close</button>
+      </div>
+    </div>
+
+    <div id="rules-overlay" class="modal hidden">
+      <div class="modal-card rules">
+        <h2>How to play</h2>
+        <p>Everyone receives a secret word. Villagers share one word and the Spy receives a related word.</p>
+        <p>Players describe their word in turn without saying the word itself. After the description round, alive players vote.</p>
+        <p>If a villager is eliminated, the same category and word pair continue into Round 2, Round 3 and so on. If the Spy is eliminated, civilians win.</p>
+        <p>If only two alive players remain, the Spy wins.</p>
+        <p><b>Voice:</b> press Get Ready or Enable microphone once so the browser can grant microphone permission. Your mic goes live only during your own speaking turn.</p>
+        <button class="primary blue" onclick="hide('rules-overlay')">Close</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script>
+/* The full JavaScript is loaded from /static/script.js */
+</script>
+<script src="/static/script.js"></script>
+</body>
+</html>
