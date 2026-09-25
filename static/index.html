@@ -2,283 +2,1553 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Who is the Spy</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+
+    <meta
+        name="viewport"
+        content="width=device-width,
+                 initial-scale=1.0,
+                 maximum-scale=1.0,
+                 user-scalable=no,
+                 viewport-fit=cover"
+    >
+
+    <title>Who Is The Spy</title>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@500;600;700;800;900&display=swap"
+        rel="stylesheet"
+    >
+
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+
     <style>
         :root {
-            --primary-blue: #1DA1F2;
-            --dark-blue: #0E4B82;
-            --btn-blue: #2CA5F5;
-            --btn-orange: #FFA92B;
-            --card-blue: #0D82D6;
-            --bg-color: #1760A5;
-            --text-light: #ffffff;
+            --blue-1: #2da4f7;
+            --blue-2: #1166bf;
+            --blue-3: #0b438f;
+            --panel: rgba(10, 68, 138, 0.72);
+            --panel-dark: rgba(4, 38, 88, 0.76);
+            --cyan: #4cc9ff;
+            --orange: #ffae2b;
+            --yellow: #ffd44e;
+            --green: #35d56a;
+            --red: #ff4d56;
+            --white: #ffffff;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
         }
 
         body {
-            background-color: var(--bg-color);
-            background-image: linear-gradient(to bottom, #1E88E5, #1565C0);
-            font-family: 'Nunito', sans-serif;
-            color: var(--text-light);
-            margin: 0; padding: 0;
-            height: 100dvh; width: 100vw; overflow: hidden;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
-        }
-
-        /* --- Header/Logo --- */
-        .logo-container {
-            background: linear-gradient(180deg, #37A8E6 0%, #1579BE 100%);
-            border: 3px solid #67C7FF;
-            border-radius: 12px;
-            padding: 10px 20px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3), inset 0 2px 5px rgba(255,255,255,0.3);
-            margin-bottom: 20px;
-            position: relative;
-        }
-        .logo-text {
-            font-family: 'Fredoka One', cursive;
-            font-size: 2.5rem;
-            color: #ffffff;
-            text-shadow: 2px 2px 0 #0D47A1, -1px -1px 0 #64B5F6, 1px -1px 0 #64B5F6, -1px 1px 0 #0D47A1, 1px 1px 0 #0D47A1;
-            line-height: 1;
-        }
-        .logo-spy { color: #FF9800; text-shadow: 2px 2px 0 #E65100, -1px -1px 0 #FFE082, 1px -1px 0 #FFE082, -1px 1px 0 #E65100, 1px 1px 0 #E65100; }
-
-        /* --- Main Container --- */
-        .main-container {
-            width: 100%; max-width: 400px;
-            height: 100%;
-            display: flex; flex-direction: column;
-            padding: 1rem; box-sizing: border-box;
-        }
-
-        /* --- Buttons & Inputs --- */
-        .game-btn {
-            width: 100%;
-            border-radius: 12px;
-            padding: 15px;
-            font-family: 'Nunito', sans-serif;
-            font-weight: 800;
-            font-size: 1.2rem;
+            font-family: "Nunito", sans-serif;
             color: white;
-            border: 2px solid rgba(255,255,255,0.2);
-            box-shadow: 0 6px 0 rgba(0,0,0,0.2), inset 0 2px 5px rgba(255,255,255,0.4);
+            background:
+                radial-gradient(
+                    circle at 50% -10%,
+                    #4ebeff 0,
+                    #1878d4 32%,
+                    #0c4794 72%,
+                    #07356f 100%
+                );
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            border: 0;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #app {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+        }
+
+        .app-shell {
+            width: 100%;
+            max-width: 470px;
+            height: 100dvh;
+            min-height: 100dvh;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .screen {
+            width: 100%;
+            height: 100%;
+            padding: 14px;
+        }
+
+        /* =====================================================
+           LOBBY
+           ===================================================== */
+
+        #lobby-screen {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .game-logo-wrap {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .game-logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 20px;
+            border-radius: 18px;
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(58, 190, 255, 0.82),
+                    rgba(11, 99, 185, 0.86)
+                );
+            border: 3px solid rgba(137, 224, 255, 0.75);
+            box-shadow:
+                0 8px 25px rgba(0, 0, 0, .24),
+                inset 0 3px 8px rgba(255,255,255,.3);
+        }
+
+        .logo-who {
+            font-family: "Fredoka", sans-serif;
+            font-size: 29px;
+            line-height: 1;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-shadow:
+                2px 2px 0 #064485,
+                -1px -1px 0 #b8ecff;
+        }
+
+        .logo-spy {
+            font-family: "Fredoka", sans-serif;
+            font-size: 42px;
+            line-height: .8;
+            font-weight: 700;
+            color: #ffc235;
+            letter-spacing: 1px;
+            text-shadow:
+                2px 3px 0 #a34600,
+                -1px -1px 0 #fff0a8;
+        }
+
+        .mode-title {
+            text-align: center;
+            font-size: 13px;
+            font-weight: 800;
+            opacity: .85;
+            margin-bottom: 8px;
+        }
+
+        .mode-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 13px;
+        }
+
+        .mode-card {
+            text-align: left;
+            padding: 15px;
+            border-radius: 18px;
+            color: white;
             cursor: pointer;
-            transition: all 0.1s;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-            display: flex; align-items: center; justify-content: center; gap: 10px;
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(83, 199, 255, .93),
+                    rgba(16, 119, 206, .88)
+                );
+            border: 2px solid rgba(255,255,255,.28);
+            box-shadow:
+                0 6px 0 rgba(0,0,0,.18),
+                inset 0 2px 5px rgba(255,255,255,.3);
+            transition: .15s ease;
         }
-        .game-btn:active { transform: translateY(6px); box-shadow: 0 0 0 rgba(0,0,0,0.2), inset 0 2px 5px rgba(255,255,255,0.4); }
-        
-        .btn-yellow { background: linear-gradient(180deg, #FFD54F 0%, #FFA000 100%); }
-        .btn-cyan { background: linear-gradient(180deg, #4FC3F7 0%, #0288D1 100%); }
-        .btn-blue { background: linear-gradient(180deg, #29B6F6 0%, #0277BD 100%); font-size: 1rem; padding: 10px; }
-        .btn-red { background: linear-gradient(180deg, #EF5350 0%, #C62828 100%); font-size: 0.9rem; padding: 6px 12px; }
-        
-        .input-box {
-            width: 100%; padding: 12px; border-radius: 12px; border: 2px solid #64B5F6;
-            background: rgba(255,255,255,0.9); color: #000; font-weight: 700; font-size: 1.1rem;
-            text-align: center; box-shadow: inset 0 3px 6px rgba(0,0,0,0.1);
-            user-select: auto; -webkit-user-select: auto; margin-bottom: 10px; outline: none;
-        }
-        .input-box:focus { border-color: #FF9800; }
 
-        /* --- Game Board & Players --- */
-        .board-container {
-            background: var(--bg-color);
-            flex: 1; display: flex; flex-direction: column; overflow: hidden;
-            border-radius: 16px; position: relative;
+        .mode-card.selected {
+            transform: translateY(-2px);
+            background:
+                linear-gradient(
+                    180deg,
+                    #ffd74c,
+                    #f59d14
+                );
+            border-color: #fff6a2;
         }
-        .header-bar {
-            background: linear-gradient(180deg, #4FC3F7 0%, #0288D1 100%);
-            padding: 10px 15px; border-radius: 12px; border: 2px solid #B3E5FC;
-            display: flex; justify-content: space-between; align-items: center;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2); margin-bottom: 15px; z-index: 2;
+
+        .mode-card .mode-icon {
+            font-size: 27px;
         }
-        .header-title { font-weight: 800; font-size: 1.1rem; text-shadow: 1px 1px 1px rgba(0,0,0,0.5); }
-        
+
+        .mode-card strong {
+            display: block;
+            font-family: "Fredoka", sans-serif;
+            font-size: 20px;
+            margin-top: 5px;
+        }
+
+        .mode-card small {
+            display: block;
+            margin-top: 5px;
+            font-weight: 800;
+            opacity: .9;
+            line-height: 1.25;
+        }
+
+        .lobby-box {
+            background: rgba(8, 60, 122, .60);
+            border: 1px solid rgba(255,255,255,.14);
+            border-radius: 22px;
+            padding: 14px;
+            box-shadow:
+                inset 0 1px rgba(255,255,255,.06),
+                0 10px 25px rgba(0,0,0,.12);
+        }
+
+        .input-row {
+            display: grid;
+            grid-template-columns: 1fr 145px;
+            gap: 9px;
+        }
+
+        .field {
+            width: 100%;
+            height: 48px;
+            border-radius: 15px;
+            background: rgba(255,255,255,.96);
+            border: 2px solid rgba(73,190,255,.65);
+            outline: none;
+            padding: 0 14px;
+            font-size: 16px;
+            font-weight: 800;
+            color: #19304c;
+            box-shadow: inset 0 3px 5px rgba(0,0,0,.08);
+        }
+
+        .field:focus {
+            border-color: #ffd44c;
+        }
+
+        .main-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 11px;
+        }
+
+        .big-btn {
+            min-height: 63px;
+            border-radius: 17px;
+            color: white;
+            cursor: pointer;
+            font-weight: 900;
+            font-size: 16px;
+            border: 2px solid rgba(255,255,255,.2);
+            box-shadow:
+                0 6px 0 rgba(0,0,0,.20),
+                inset 0 2px 6px rgba(255,255,255,.32);
+            text-shadow: 0 1px 2px rgba(0,0,0,.45);
+        }
+
+        .big-btn:active {
+            transform: translateY(5px);
+            box-shadow: 0 1px 0 rgba(0,0,0,.2);
+        }
+
+        .btn-yellow {
+            background: linear-gradient(180deg, #ffd953, #f29b17);
+        }
+
+        .btn-cyan {
+            background: linear-gradient(180deg, #61d7ff, #158ad8);
+        }
+
+        .btn-blue {
+            background: linear-gradient(180deg, #35aef5, #1261c1);
+        }
+
+        .full-btn {
+            width: 100%;
+            margin-top: 10px;
+            min-height: 50px;
+            border-radius: 15px;
+            background:
+                linear-gradient(180deg, #2a9eed, #0e5ab6);
+        }
+
+        .online-counter {
+            margin-top: 14px;
+            text-align: center;
+            font-weight: 900;
+            font-size: 13px;
+            opacity: .9;
+        }
+
+        .loading-text {
+            min-height: 22px;
+            text-align: center;
+            margin-top: 8px;
+            color: #ffe268;
+            font-size: 13px;
+            font-weight: 900;
+        }
+
+        /* =====================================================
+           GAME SCREEN
+           ===================================================== */
+
+        #game-screen {
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+        }
+
+        .game-board {
+            width: 100%;
+            height: 100%;
+            border-radius: 23px;
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(22, 108, 194, .80),
+                    rgba(8, 67, 139, .96)
+                );
+            border: 1px solid rgba(255,255,255,.12);
+            box-shadow: 0 14px 35px rgba(0,0,0,.18);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .topbar {
+            padding: 10px 10px 8px;
+            display: grid;
+            grid-template-columns: 44px 1fr 44px;
+            align-items: center;
+            gap: 8px;
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(47, 166, 238, .96),
+                    rgba(20, 102, 188, .92)
+                );
+            border-bottom: 1px solid rgba(255,255,255,.15);
+        }
+
+        .icon-btn {
+            width: 42px;
+            height: 42px;
+            border-radius: 13px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            cursor: pointer;
+            background: rgba(255,255,255,.13);
+            border: 1px solid rgba(255,255,255,.18);
+        }
+
+        .room-heading {
+            min-width: 0;
+            text-align: center;
+        }
+
+        .room-name {
+            font-family: "Fredoka", sans-serif;
+            font-size: 19px;
+            line-height: 1.05;
+        }
+
+        .room-status {
+            font-size: 11px;
+            font-weight: 900;
+            opacity: .88;
+            margin-top: 2px;
+        }
+
+        .secret-banner {
+            margin: 9px 12px 0;
+            padding: 12px;
+            border-radius: 15px;
+            text-align: center;
+            background: rgba(0,0,0,.23);
+            border: 1px dashed rgba(103, 206, 255, .75);
+        }
+
+        .secret-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 900;
+            opacity: .72;
+        }
+
+        .secret-value {
+            font-family: "Fredoka", sans-serif;
+            font-size: 29px;
+            margin-top: 4px;
+        }
+
+        .secret-role {
+            margin-top: 2px;
+            font-size: 11px;
+            font-weight: 900;
+        }
+
+        .players-wrap {
+            flex: 1;
+            min-height: 150px;
+            overflow: auto;
+            padding: 14px 12px 7px;
+        }
+
         .players-grid {
-            display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;
-            padding: 10px; flex: 1; overflow-y: auto; z-index: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px 15px;
+            align-items: start;
         }
-        
+
         .player-card {
-            display: flex; flex-direction: column; align-items: center; position: relative;
+            position: relative;
+            min-width: 0;
+            text-align: center;
         }
-        .player-avatar-wrapper {
-            width: 70px; height: 70px; border-radius: 50%; padding: 4px;
-            background: linear-gradient(180deg, #E0E0E0 0%, #9E9E9E 100%);
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3); position: relative; display: flex; justify-content: center; align-items: center;
-        }
-        .player-avatar-wrapper.active { background: linear-gradient(180deg, #4CAF50 0%, #2E7D32 100%); border: 2px solid #81C784;}
-        .player-avatar-wrapper.dead { background: linear-gradient(180deg, #ef5350 0%, #c62828 100%); opacity: 0.6; filter: grayscale(100%);}
-        .player-avatar-wrapper.speaking { animation: pulse 1s infinite alternate; background: linear-gradient(180deg, #FFC107 0%, #FF9800 100%); border: 3px solid #FFF;}
-        
-        @keyframes pulse { from { transform: scale(1); box-shadow: 0 0 5px #FF9800; } to { transform: scale(1.1); box-shadow: 0 0 15px #FFC107; } }
 
-        .player-initial { font-family: 'Fredoka One', cursive; font-size: 2rem; color: #FFF; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
-        .player-name { margin-top: 5px; font-weight: 700; font-size: 0.9rem; text-align: center; color: #FFF; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
-        
-        .mic-badge {
-            position: absolute; bottom: -5px; right: -5px; width: 24px; height: 24px; border-radius: 50%;
-            background: #444; border: 2px solid #FFF; display: flex; align-items: center; justify-content: center; font-size: 10px;
+        .avatar-ring {
+            width: 70px;
+            height: 70px;
+            margin: 0 auto;
+            padding: 4px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background:
+                linear-gradient(180deg, #dff8ff, #7eaed6);
+            box-shadow: 0 5px 12px rgba(0,0,0,.28);
+            position: relative;
+            transition: .16s ease;
         }
-        .mic-badge.on { background: #4CAF50; }
-        .mic-badge.off { background: #F44336; }
-        
+
+        .avatar-ring.ready {
+            border: 3px solid #35df75;
+            background:
+                linear-gradient(180deg, #77ef9d, #1f8e51);
+        }
+
+        .avatar-ring.speaking {
+            border: 3px solid #ffe75e;
+            background:
+                linear-gradient(180deg, #ffd54a, #ff9f13);
+            animation: speakPulse .9s infinite alternate;
+        }
+
+        .avatar-ring.dead {
+            filter: grayscale(1);
+            opacity: .45;
+        }
+
+        @keyframes speakPulse {
+            from {
+                transform: scale(1);
+                box-shadow: 0 0 4px #ffc72c;
+            }
+            to {
+                transform: scale(1.09);
+                box-shadow: 0 0 18px #ffdb3b;
+            }
+        }
+
+        .avatar-face {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: "Fredoka", sans-serif;
+            font-size: 29px;
+            font-weight: 700;
+            background:
+                linear-gradient(180deg, #66798e, #37485a);
+            color: white;
+            text-shadow: 1px 2px 2px rgba(0,0,0,.4);
+        }
+
         .number-badge {
-            position: absolute; top: -5px; left: -5px; width: 20px; height: 20px; border-radius: 50%;
-            background: #2196F3; border: 1.5px solid #FFF; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 900; color: white;
+            position: absolute;
+            top: -5px;
+            left: -5px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #2a9bea;
+            border: 2px solid white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 10px;
+            font-weight: 900;
         }
 
-        /* --- Middle Action Area --- */
-        .action-area { display: flex; flex-direction: column; gap: 10px; align-items: center; margin: 10px 0; z-index: 2; }
-
-        /* --- Chat Box --- */
-        .chat-container {
-            background: rgba(13, 71, 161, 0.6); border-radius: 12px;
-            display: flex; flex-direction: column; flex: 0.6; min-height: 120px; border: 1px solid rgba(255,255,255,0.1);
-        }
-        #messages { flex: 1; overflow-y: auto; padding: 10px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 4px; }
-        .chat-input-area { display: flex; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 0 0 12px 12px; gap: 8px; }
-        .chat-input-area input { flex: 1; padding: 8px 12px; border-radius: 20px; border: none; background: rgba(255,255,255,0.9); font-family: 'Nunito', sans-serif; font-weight: 600; outline: none;}
-        .chat-icon-btn { width: 36px; height: 36px; border-radius: 50%; background: #4FC3F7; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; color: white; font-size: 1.2rem; box-shadow: 0 2px 5px rgba(0,0,0,0.2);}
-
-        /* --- Bottom Bar --- */
-        .bottom-bar { display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
-        .bottom-icon { width: 45px; height: 45px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; transition: background 0.2s;}
-        .bottom-icon.active { background: #4CAF50; color: white; box-shadow: 0 0 10px #4CAF50; }
-        .bottom-icon.inactive { background: #F44336; color: white; }
-        
-        .secret-word-box { background: rgba(0, 0, 0, 0.4); border: 2px dashed #4FC3F7; border-radius: 12px; padding: 10px; text-align: center; margin-bottom: 10px; }
-
-        #vote-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 50;
-            display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; border-radius: 16px;
+        .ready-badge {
+            position: absolute;
+            right: -4px;
+            bottom: -4px;
+            width: 23px;
+            height: 23px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #2cd568;
+            border: 2px solid white;
+            font-size: 11px;
         }
 
-        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 10px; }
+        .dead-badge {
+            position: absolute;
+            right: -5px;
+            bottom: -5px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #222;
+            border: 2px solid white;
+        }
+
+        .mic-badge {
+            position: absolute;
+            right: -4px;
+            bottom: -4px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #202733;
+            border: 2px solid white;
+            font-size: 11px;
+        }
+
+        .player-name {
+            margin-top: 7px;
+            font-size: 12px;
+            font-weight: 900;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .you-label {
+            color: #ffe15b;
+        }
+
+        .empty-card .avatar-ring {
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(255,255,255,.14),
+                    rgba(255,255,255,.07)
+                );
+            border: 2px dashed rgba(255,255,255,.20);
+            box-shadow: none;
+        }
+
+        .empty-plus {
+            font-size: 31px;
+            opacity: .7;
+        }
+
+        .action-area {
+            padding: 5px 12px 9px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .ready-btn {
+            width: 100%;
+            min-height: 54px;
+            border-radius: 17px;
+            cursor: pointer;
+            color: white;
+            font-size: 18px;
+            font-weight: 900;
+            background: linear-gradient(180deg, #ffd454, #ef9b18);
+            box-shadow:
+                0 6px 0 rgba(0,0,0,.20),
+                inset 0 2px 6px rgba(255,255,255,.35);
+        }
+
+        .ready-btn.ready-state {
+            background:
+                linear-gradient(180deg, #4ce080, #17a954);
+        }
+
+        .ready-btn.cancel-state {
+            background:
+                linear-gradient(180deg, #ffbd47, #d68012);
+        }
+
+        .alert-bar {
+            min-height: 34px;
+            border-radius: 14px;
+            padding: 7px 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: rgba(0,0,0,.23);
+            border: 1px solid rgba(255,255,255,.08);
+            font-size: 11px;
+            font-weight: 900;
+        }
+
+        .timer-wrap {
+            display: none;
+        }
+
+        .timer-wrap.show {
+            display: block;
+        }
+
+        .timer-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 11px;
+            font-weight: 900;
+        }
+
+        .timer-value {
+            color: #75f69d;
+        }
+
+        .pass-btn {
+            padding: 6px 11px;
+            border-radius: 99px;
+            color: white;
+            cursor: pointer;
+            background: #1a74d0;
+            border: 1px solid rgba(255,255,255,.24);
+            font-size: 10px;
+            font-weight: 900;
+        }
+
+        .timer-bar {
+            width: 100%;
+            height: 7px;
+            border-radius: 99px;
+            background: rgba(0,0,0,.34);
+            overflow: hidden;
+        }
+
+        .timer-progress {
+            width: 100%;
+            height: 100%;
+            background: #51df78;
+            transition: width 1s linear;
+        }
+
+        .timer-progress.warning {
+            background: #ffd13c;
+        }
+
+        .timer-progress.danger {
+            background: #ff4b55;
+        }
+
+        .chat-box {
+            height: 150px;
+            margin: 0 11px;
+            border-radius: 17px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            background: rgba(4,39,86,.45);
+            border: 1px solid rgba(255,255,255,.08);
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 9px;
+            font-size: 11px;
+        }
+
+        .message {
+            margin-bottom: 5px;
+            line-height: 1.25;
+            word-break: break-word;
+        }
+
+        .message .sender {
+            color: #6bd8ff;
+            font-weight: 900;
+        }
+
+        .message.system {
+            color: #ffe46b;
+            text-align: center;
+            font-size: 10px;
+            font-weight: 900;
+        }
+
+        .message.reaction {
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .chat-input-row {
+            display: flex;
+            gap: 7px;
+            padding: 7px;
+            background: rgba(0,0,0,.17);
+        }
+
+        .chat-input {
+            min-width: 0;
+            flex: 1;
+            height: 36px;
+            border: 0;
+            outline: 0;
+            border-radius: 20px;
+            padding: 0 12px;
+            color: #1d3046;
+            background: rgba(255,255,255,.96);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .send-btn {
+            width: 37px;
+            height: 37px;
+            border-radius: 50%;
+            cursor: pointer;
+            background: #4cc9ff;
+            color: white;
+            font-size: 17px;
+        }
+
+        .bottom-bar {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            padding: 9px 12px 10px;
+        }
+
+        .bottom-control {
+            height: 47px;
+            border-radius: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            color: white;
+            background: rgba(255,255,255,.13);
+            border: 1px solid rgba(255,255,255,.16);
+            font-size: 21px;
+        }
+
+        .bottom-control.active {
+            background: #2ed56a;
+            box-shadow: 0 0 15px rgba(46,213,106,.4);
+        }
+
+        .bottom-control.off {
+            background: #ec4452;
+        }
+
+        /* =====================================================
+           REACTIONS
+           ===================================================== */
+
+        .reaction-panel {
+            position: absolute;
+            left: 10px;
+            right: 10px;
+            bottom: 72px;
+            padding: 10px;
+            border-radius: 18px;
+            background: rgba(8,23,52,.96);
+            border: 1px solid rgba(255,255,255,.11);
+            box-shadow: 0 12px 30px rgba(0,0,0,.35);
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 7px;
+            z-index: 60;
+        }
+
+        .reaction-btn {
+            height: 42px;
+            border-radius: 12px;
+            background: rgba(255,255,255,.07);
+            cursor: pointer;
+            font-size: 21px;
+        }
+
+        /* =====================================================
+           OVERLAYS
+           ===================================================== */
+
+        .overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 18px;
+            background: rgba(3,16,37,.76);
+            backdrop-filter: blur(4px);
+        }
+
+        .overlay-card {
+            width: 100%;
+            max-width: 360px;
+            max-height: 90%;
+            overflow: auto;
+            border-radius: 23px;
+            padding: 20px;
+            background:
+                linear-gradient(
+                    180deg,
+                    #175eaf,
+                    #0a3a7d
+                );
+            border: 2px solid rgba(255,255,255,.15);
+            box-shadow: 0 20px 50px rgba(0,0,0,.38);
+        }
+
+        .overlay-title {
+            font-family: "Fredoka", sans-serif;
+            text-align: center;
+            font-size: 29px;
+            margin: 0 0 5px;
+        }
+
+        .overlay-subtitle {
+            text-align: center;
+            font-size: 12px;
+            font-weight: 800;
+            opacity: .82;
+            margin-bottom: 16px;
+        }
+
+        .vote-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .vote-btn {
+            min-height: 64px;
+            border-radius: 16px;
+            cursor: pointer;
+            color: white;
+            background:
+                linear-gradient(
+                    180deg,
+                    #36a9ef,
+                    #125bb5
+                );
+            border: 2px solid rgba(255,255,255,.16);
+            box-shadow: 0 5px 0 rgba(0,0,0,.17);
+            font-size: 13px;
+            font-weight: 900;
+        }
+
+        .vote-btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 1px 0 rgba(0,0,0,.17);
+        }
+
+        .menu-card {
+            position: absolute;
+            top: 61px;
+            left: 8px;
+            width: 175px;
+            z-index: 80;
+            border-radius: 16px;
+            overflow: hidden;
+            background: white;
+            color: #1f2a38;
+            box-shadow: 0 15px 35px rgba(0,0,0,.35);
+        }
+
+        .menu-item {
+            width: 100%;
+            padding: 14px 16px;
+            text-align: left;
+            cursor: pointer;
+            background: white;
+            color: #1f2a38;
+            font-weight: 800;
+        }
+
+        .menu-item:hover {
+            background: #edf6ff;
+        }
+
+        .rules-text {
+            font-size: 12px;
+            line-height: 1.5;
+            font-weight: 700;
+            opacity: .92;
+        }
+
+        .rules-text h3 {
+            color: #ffe45a;
+            margin: 16px 0 5px;
+            font-size: 14px;
+        }
+
+        .close-btn {
+            margin-top: 15px;
+            width: 100%;
+            height: 46px;
+            border-radius: 14px;
+            cursor: pointer;
+            color: white;
+            font-weight: 900;
+            background:
+                linear-gradient(
+                    180deg,
+                    #35a9ef,
+                    #115fb8
+                );
+        }
+
+        .game-over-card {
+            text-align: center;
+        }
+
+        .winner-text {
+            font-family: "Fredoka", sans-serif;
+            font-size: 38px;
+            margin-bottom: 8px;
+        }
+
+        .winner-text.civilians {
+            color: #5df18d;
+        }
+
+        .winner-text.spy {
+            color: #ff6470;
+        }
+
+        .game-over-message {
+            font-size: 13px;
+            font-weight: 800;
+            line-height: 1.4;
+        }
+
+        .spy-reveal {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 15px;
+            background: rgba(0,0,0,.2);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        /* =====================================================
+           SMALL SCREENS
+           ===================================================== */
+
+        @media (max-height: 720px) {
+            .game-logo-wrap {
+                margin-bottom: 12px;
+            }
+
+            .game-logo {
+                padding: 10px 15px;
+            }
+
+            .logo-who {
+                font-size: 23px;
+            }
+
+            .logo-spy {
+                font-size: 33px;
+            }
+
+            .mode-card {
+                padding: 11px;
+            }
+
+            .mode-card strong {
+                font-size: 17px;
+            }
+
+            .players-grid {
+                gap: 9px 12px;
+            }
+
+            .avatar-ring {
+                width: 62px;
+                height: 62px;
+            }
+
+            .chat-box {
+                height: 130px;
+            }
+        }
     </style>
 </head>
+
 <body>
 
-    <div class="main-container">
-        
-        <!-- JOIN SCREEN -->
-        <div id="join-section" class="flex flex-col h-full justify-center">
-            
-            <div class="flex justify-center w-full mb-8">
-                <div class="logo-container text-center">
-                    <div class="logo-text">WHO<br>IS THE <span class="logo-spy">SPY</span></div>
+<div id="app">
+    <div class="app-shell">
+
+        <!-- =================================================
+             LOBBY
+             ================================================= -->
+
+        <section id="lobby-screen" class="screen">
+
+            <div class="game-logo-wrap">
+                <div class="game-logo">
+                    <span class="logo-who">WHO IS THE</span>
+                    <span class="logo-spy">SPY</span>
                 </div>
             </div>
-            
-            <div class="bg-[rgba(255,255,255,0.1)] p-5 rounded-2xl border border-[rgba(255,255,255,0.2)] mb-6">
-                <input type="text" id="username" placeholder="Enter Player Name" class="input-box">
-                <select id="capacity-select" class="input-box" style="margin-bottom:0;">
-                    <option value="4">4 Players Mode</option>
-                    <option value="6">6 Players Mode</option>
-                </select>
+
+            <div class="mode-title">
+                SELECT GAME MODE
             </div>
 
-            <div class="flex gap-3 mb-6">
-                <button onclick="joinRoom('random')" class="game-btn btn-yellow flex-1" style="flex-direction: column; gap: 2px;">
-                    <span style="font-size: 1.5rem;">🔍</span>
-                    <span style="font-size: 0.9rem;">Auto Match</span>
+            <div class="mode-grid">
+
+                <button
+                    id="mode-spy"
+                    class="mode-card selected"
+                    type="button"
+                    onclick="selectGameMode('spy')"
+                >
+                    <div class="mode-icon">🕵️</div>
+                    <strong>Who's the Spy</strong>
+                    <small>
+                        Villagers get the same word.
+                        Spy gets a different word.
+                    </small>
                 </button>
-                <button onclick="joinRoom('create')" class="game-btn btn-cyan flex-1" style="flex-direction: column; gap: 2px;">
-                    <span style="font-size: 1.5rem;">🏠</span>
-                    <span style="font-size: 0.9rem;">Create Room</span>
+
+                <button
+                    id="mode-wordless"
+                    class="mode-card"
+                    type="button"
+                    onclick="selectGameMode('wordless')"
+                >
+                    <div class="mode-icon">❓</div>
+                    <strong>Wordless Spy</strong>
+                    <small>
+                        Spy gets no word and must
+                        guess it from descriptions.
+                    </small>
                 </button>
+
             </div>
-            <button onclick="joinRoom('join')" class="game-btn btn-blue">Join with Code</button>
-            
-            <div class="mt-8 text-center bg-[rgba(0,0,0,0.3)] rounded-full py-2 px-4 inline-block self-center border border-[rgba(255,255,255,0.1)]">
-                <span class="text-sm font-bold text-gray-300">👥 Players Online: <span id="active-users-count" class="text-green-400">0</span></span>
+
+            <div class="lobby-box">
+
+                <div class="input-row">
+
+                    <input
+                        id="username"
+                        class="field"
+                        type="text"
+                        maxlength="20"
+                        autocomplete="off"
+                        placeholder="Enter Player Name"
+                    >
+
+                    <select
+                        id="capacity"
+                        class="field"
+                    >
+                        <option value="4">4 Players</option>
+                        <option value="5">5 Players</option>
+                        <option value="6" selected>6 Players</option>
+                        <option value="7">7 Players</option>
+                        <option value="8">8 Players</option>
+                    </select>
+
+                </div>
+
+                <div class="main-buttons">
+
+                    <button
+                        class="big-btn btn-yellow"
+                        onclick="joinRoom('random')"
+                    >
+                        🔍<br>
+                        Auto Match
+                    </button>
+
+                    <button
+                        class="big-btn btn-cyan"
+                        onclick="joinRoom('create')"
+                    >
+                        🏠<br>
+                        Create Room
+                    </button>
+
+                </div>
+
+                <button
+                    class="big-btn full-btn"
+                    onclick="joinRoom('join')"
+                >
+                    🔢 Join With Room Code
+                </button>
+
+                <div class="online-counter">
+                    👥 Players Online:
+                    <span id="active-users-count">0</span>
+                </div>
+
+                <div
+                    id="loading-text"
+                    class="loading-text"
+                ></div>
+
             </div>
-            
-            <p id="join-loading" class="text-yellow-400 font-bold text-center mt-4 hidden animate-pulse"></p>
-        </div>
+        </section>
 
 
-        <!-- GAME SCREEN -->
-        <div id="game-section" class="hidden h-full flex-col">
-            
-            <div class="board-container">
-                <!-- Top Header -->
-                <div class="header-bar">
-                    <div class="flex flex-col">
-                        <span class="header-title">Room: <span id="room-name-display">----</span></span>
-                        <span id="game-status-text" class="text-xs text-blue-100 font-bold">Waiting...</span>
-                    </div>
-                    <button onclick="leaveGame()" class="game-btn btn-red" style="width: auto;">Leave</button>
-                </div>
+        <!-- =================================================
+             GAME SCREEN
+             ================================================= -->
 
-                <!-- Secret Word -->
-                <div id="secret-word-banner" class="hidden secret-word-box mx-4">
-                    <div class="text-xs text-blue-200 uppercase font-bold tracking-widest">Your Secret Word</div>
-                    <div id="my-word" class="text-2xl font-black text-white tracking-wider mt-1" style="font-family: 'Fredoka One', cursive;">WAITING</div>
-                </div>
+        <section
+            id="game-screen"
+            class="screen hidden"
+        >
 
-                <!-- Players Grid -->
-                <div class="players-grid" id="players-grid-container">
-                    <!-- Players dynamically added here -->
-                </div>
+            <div class="game-board">
 
-                <!-- Timer Area -->
-                <div class="action-area" id="action-area">
-                    <div id="turn-timer-container" class="hidden w-full px-4">
-                        <div class="flex justify-between items-center mb-1">
-                            <span id="turn-countdown" class="font-bold text-yellow-400 text-xs">Your Turn: 30s</span>
-                            <button onclick="endMyTurn()" class="bg-blue-600 px-3 py-1 rounded-full text-[10px] font-bold shadow border border-blue-400 uppercase">Pass Mic</button>
+                <div class="topbar">
+
+                    <button
+                        class="icon-btn"
+                        onclick="toggleMenu()"
+                        aria-label="Menu"
+                    >
+                        ☰
+                    </button>
+
+                    <div class="room-heading">
+                        <div class="room-name">
+                            Room:
+                            <span id="room-name">----</span>
                         </div>
-                        <div class="w-full bg-[rgba(0,0,0,0.5)] h-2 rounded-full overflow-hidden">
-                            <div id="turn-progress-bar" class="bg-green-400 h-full w-full transition-all duration-1000 linear"></div>
+
+                        <div
+                            id="room-status"
+                            class="room-status"
+                        >
+                            Waiting...
                         </div>
                     </div>
-                    <div id="game-alert-box" class="bg-[rgba(0,0,0,0.6)] px-4 py-1.5 rounded-full text-xs font-bold text-center border border-[rgba(255,255,255,0.1)] mx-4">
+
+                    <button
+                        class="icon-btn"
+                        onclick="copyRoomCode()"
+                        aria-label="Copy room code"
+                    >
+                        ⧉
+                    </button>
+
+                </div>
+
+
+                <!-- SECRET WORD -->
+
+                <div
+                    id="secret-banner"
+                    class="secret-banner hidden"
+                >
+                    <div class="secret-label">
+                        Your Secret Word
+                    </div>
+
+                    <div
+                        id="secret-value"
+                        class="secret-value"
+                    >
+                        WAITING
+                    </div>
+
+                    <div
+                        id="secret-role"
+                        class="secret-role"
+                    ></div>
+                </div>
+
+
+                <!-- PLAYERS -->
+
+                <div class="players-wrap">
+                    <div
+                        id="players-grid"
+                        class="players-grid"
+                    ></div>
+                </div>
+
+
+                <!-- ACTION AREA -->
+
+                <div class="action-area">
+
+                    <div
+                        id="timer-wrap"
+                        class="timer-wrap"
+                    >
+                        <div class="timer-head">
+
+                            <span id="timer-text">
+                                YOUR TURN: 30s
+                            </span>
+
+                            <button
+                                class="pass-btn"
+                                onclick="endMyTurn()"
+                            >
+                                PASS MIC
+                            </button>
+
+                        </div>
+
+                        <div class="timer-bar">
+                            <div
+                                id="timer-progress"
+                                class="timer-progress"
+                            ></div>
+                        </div>
+                    </div>
+
+
+                    <button
+                        id="ready-button"
+                        class="ready-btn"
+                        onclick="toggleReady()"
+                    >
+                        Get Ready
+                    </button>
+
+
+                    <div
+                        id="alert-bar"
+                        class="alert-bar"
+                    >
                         Waiting for players...
                     </div>
+
                 </div>
 
-                <!-- Chat Box -->
-                <div class="chat-container mx-4 mb-2">
-                    <div id="messages"></div>
-                    <div class="chat-input-area">
-                        <input type="text" id="chat-input" placeholder="Type a message...">
-                        <button onclick="sendChat()" class="chat-icon-btn">➤</button>
+
+                <!-- CHAT -->
+
+                <div class="chat-box">
+
+                    <div
+                        id="messages"
+                        class="messages"
+                    ></div>
+
+                    <div class="chat-input-row">
+
+                        <input
+                            id="chat-input"
+                            class="chat-input"
+                            type="text"
+                            maxlength="300"
+                            autocomplete="off"
+                            placeholder="Type a message..."
+                        >
+
+                        <button
+                            class="send-btn"
+                            onclick="sendChat()"
+                        >
+                            ➤
+                        </button>
+
                     </div>
-                </div>
-                
-                <!-- Bottom Action Bar -->
-                <div class="bottom-bar mx-4">
-                    <div id="bottom-mic-btn" class="bottom-icon inactive" onclick="toggleMic()">🎤</div>
-                    <div class="bottom-icon" style="opacity: 0.5;">💬</div>
+
                 </div>
 
-                <!-- Voting Overlay -->
-                <div id="vote-overlay" class="hidden">
-                    <h2 class="text-2xl font-black text-red-500 mb-6" style="font-family: 'Fredoka One', cursive;">Who's the Spy?</h2>
-                    <div id="vote-buttons" class="grid grid-cols-2 gap-4 w-full max-w-xs"></div>
+
+                <!-- BOTTOM BAR -->
+
+                <div class="bottom-bar">
+
+                    <button
+                        id="mic-button"
+                        class="bottom-control off"
+                        onclick="toggleMic()"
+                        title="Microphone"
+                    >
+                        🎤
+                    </button>
+
+                    <button
+                        class="bottom-control"
+                        onclick="toggleReactions()"
+                        title="Reactions"
+                    >
+                        😀
+                    </button>
+
+                    <button
+                        class="bottom-control"
+                        onclick="focusChat()"
+                        title="Chat"
+                    >
+                        💬
+                    </button>
+
                 </div>
 
             </div>
-        </div>
-    </div>
-    
-    <!-- Audio Elements -->
-    <audio id="sfx-click" src="https://actions.google.com/sounds/v1/ui/button_click.ogg" preload="auto"></audio>
-    <audio id="sfx-start" src="https://actions.google.com/sounds/v1/science_fiction/computer_beeps.ogg" preload="auto"></audio>
-    <audio id="sfx-turn" src="https://actions.google.com/sounds/v1/communication/walkie_talkie_squelch.ogg" preload="auto"></audio>
-    <audio id="sfx-timeout" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
-    <audio id="sfx-spy-caught" src="https://actions.google.com/sounds/v1/crowds/crowd_cheering.ogg" preload="auto"></audio>
-    <audio id="sfx-civ-dead" src="https://actions.google.com/sounds/v1/alarms/radiation_meter_fast.ogg" preload="auto"></audio>
-    <audio id="sfx-game-over" src="https://actions.google.com/sounds/v1/science_fiction/power_down.ogg" preload="auto"></audio>
 
-    <script src="/static/script.js"></script>
+
+            <!-- REACTION PANEL -->
+
+            <div
+                id="reaction-panel"
+                class="reaction-panel hidden"
+            >
+                <button class="reaction-btn" onclick="sendReaction('🎉')">🎉</button>
+                <button class="reaction-btn" onclick="sendReaction('😂')">😂</button>
+                <button class="reaction-btn" onclick="sendReaction('❤️')">❤️</button>
+                <button class="reaction-btn" onclick="sendReaction('😱')">😱</button>
+                <button class="reaction-btn" onclick="sendReaction('👏')">👏</button>
+                <button class="reaction-btn" onclick="sendReaction('👍')">👍</button>
+                <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
+                <button class="reaction-btn" onclick="sendReaction('🤔')">🤔</button>
+                <button class="reaction-btn" onclick="sendReaction('😎')">😎</button>
+                <button class="reaction-btn" onclick="sendReaction('😭')">😭</button>
+                <button class="reaction-btn" onclick="sendReaction('😡')">😡</button>
+                <button class="reaction-btn" onclick="sendReaction('💀')">💀</button>
+            </div>
+
+
+            <!-- MENU -->
+
+            <div
+                id="menu-card"
+                class="menu-card hidden"
+            >
+                <button
+                    class="menu-item"
+                    onclick="openRules()"
+                >
+                    📖 Rules
+                </button>
+
+                <button
+                    class="menu-item"
+                    onclick="toggleVolume()"
+                >
+                    🔊 Volume
+                </button>
+
+                <button
+                    class="menu-item"
+                    onclick="spectateMode()"
+                >
+                    👁️ Spectate
+                </button>
+
+                <button
+                    class="menu-item"
+                    onclick="leaveGame()"
+                >
+                    🚪 Exit
+                </button>
+            </div>
+
+        </section>
+
+
+        <!-- =================================================
+             VOTING OVERLAY
+             ================================================= -->
+
+        <div
+            id="vote-overlay"
+            class="overlay hidden"
+        >
+            <div class="overlay-card">
+
+                <h2
+                    class="overlay-title"
+                    style="color:#ff656f;"
+                >
+                    Who's The Spy?
+                </h2>
+
+                <div
+                    id="vote-status"
+                    class="overlay-subtitle"
+                >
+                    Vote for the player you suspect.
+                </div>
+
+                <div
+                    id="vote-grid"
+                    class="vote-grid"
+                ></div>
+
+            </div>
+        </div>
+
+
+        <!-- =================================================
+             RULES OVERLAY
+             ================================================= -->
+
+        <div
+            id="rules-overlay"
+            class="overlay hidden"
+        >
+            <div class="overlay-card">
+
+                <h2 class="overlay-title">
+                    Game Rules
+                </h2>
+
+                <div
+                    id="rules-content"
+                    class="rules-text"
+                ></div>
+
+                <button
+                    class="close-btn"
+                    onclick="closeRules()"
+                >
+                    Close
+                </button>
+
+            </div>
+        </div>
+
+
+        <!-- =================================================
+             GAME OVER
+             ================================================= -->
+
+        <div
+            id="game-over-overlay"
+            class="overlay hidden"
+        >
+            <div class="overlay-card game-over-card">
+
+                <div
+                    id="winner-text"
+                    class="winner-text"
+                >
+                    GAME OVER
+                </div>
+
+                <div
+                    id="game-over-message"
+                    class="game-over-message"
+                ></div>
+
+                <div
+                    id="spy-reveal"
+                    class="spy-reveal"
+                ></div>
+
+                <button
+                    class="close-btn"
+                    onclick="leaveGame()"
+                >
+                    Back To Lobby
+                </button>
+
+            </div>
+        </div>
+
+    </div>
+</div>
+
+
+<!-- =========================================================
+     SOUND EFFECTS
+     ========================================================= -->
+
+<audio
+    id="sound-click"
+    src="https://actions.google.com/sounds/v1/ui/button_click.ogg"
+    preload="auto"
+></audio>
+
+<audio
+    id="sound-start"
+    src="https://actions.google.com/sounds/v1/science_fiction/computer_beeps.ogg"
+    preload="auto"
+></audio>
+
+<audio
+    id="sound-turn"
+    src="https://actions.google.com/sounds/v1/communication/walkie_talkie_squelch.ogg"
+    preload="auto"
+></audio>
+
+<audio
+    id="sound-timeout"
+    src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
+    preload="auto"
+></audio>
+
+<audio
+    id="sound-win"
+    src="https://actions.google.com/sounds/v1/crowds/crowd_cheering.ogg"
+    preload="auto"
+></audio>
+
+<audio
+    id="sound-lose"
+    src="https://actions.google.com/sounds/v1/science_fiction/power_down.ogg"
+    preload="auto"
+></audio>
+
+
+<script src="/static/script.js"></script>
+
 </body>
 </html>
