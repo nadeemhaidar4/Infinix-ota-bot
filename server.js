@@ -2,8 +2,7 @@ const express = require("express");
 const dns = require("dns").promises;
 const net = require("net");
 const path = require("path");
-const { Readable, Transform } = require("stream");
-const { pipeline } = require("stream/promises");
+const crypto = require("crypto");
 const youtubedl = require("youtube-dl-exec");
 
 const app = express();
@@ -11,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
 const INSPECT_TIMEOUT = 30000;
-const IDLE_TIMEOUT = 60000; // 60 sec tak koi data na aaye tabhi abort
+const DOWNLOAD_TIMEOUT = 300000; // 5 mins
 const MAX_REDIRECTS = 4;
 
 const MAX_ACTIVE_PER_IP = 3;
@@ -19,12 +18,6 @@ const RATE_WINDOW = 60 * 1000;
 const RATE_LIMIT = 20;
 
 const PUBLIC_DIR = path.join(__dirname, "public");
-
-const DEFAULT_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Accept": "*/*",
-  "Accept-Encoding": "identity"
-};
 
 const ALLOWED_MIME = new Set([
   "video/mp4",
@@ -44,7 +37,7 @@ const ALLOWED_MIME = new Set([
 
 const rateMap = new Map();
 const activeMap = new Map();
-const extractionCache = new Map();
+const extractionCache = new Map(); // key: originalUrl | cdnUrl | downloadId
 
 app.use(express.json({ limit: "100kb" }));
 
@@ -59,17 +52,37 @@ function isPrivateIPv4(ip) {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
   const [a, b] = parts;
-  return (a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 0);
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a === 0
+  );
 }
 
 function isPrivateIPv6(ip) {
   const value = ip.toLowerCase();
-  return (value === "::1" || value === "::" || value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe80:"));
+  return (
+    value === "::1" ||
+    value === "::" ||
+    value.startsWith("fc") ||
+    value.startsWith("fd") ||
+    value.startsWith("fe80:")
+  );
 }
 
 async function isBlockedHost(hostname) {
   const host = hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host === "local" || host === "metadata.google.internal") return true;
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "local" ||
+    host === "metadata.google.internal"
+  ) {
+    return true;
+  }
   const type = net.isIP(host);
   if (type === 4) return isPrivateIPv4(host);
   if (type === 6) return isPrivateIPv6(host);
@@ -93,8 +106,12 @@ async function validateUrl(rawUrl) {
   } catch {
     throw new Error("Please enter a valid URL.");
   }
-  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Only HTTP and HTTPS URLs are supported.");
-  if (await isBlockedHost(url.hostname)) throw new Error("This URL cannot be accessed safely.");
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Only HTTP and HTTPS URLs are supported.");
+  }
+  if (await isBlockedHost(url.hostname)) {
+    throw new Error("This URL cannot be accessed safely.");
+  }
   return url;
 }
 
@@ -123,10 +140,17 @@ function releaseDownload(ip) {
 }
 
 function filenameFromUrl(url, contentType = "", customTitle = null) {
-  let ext = contentType.includes("video") ? ".mp4" : contentType.includes("audio") ? ".mp3" : ".mp4";
+  let ext = contentType.includes("video")
+    ? ".mp4"
+    : contentType.includes("audio")
+      ? ".mp3"
+      : ".mp4";
 
   if (customTitle) {
-    let safeTitle = customTitle.replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").slice(0, 40);
+    let safeTitle = customTitle
+      .replace(/[^a-zA-Z0-9]/g, "_")
+      .replace(/_+/g, "_")
+      .slice(0, 40);
     if (safeTitle.endsWith("_")) safeTitle = safeTitle.slice(0, -1);
     if (!safeTitle) safeTitle = "Media";
     return `QuickSave_${safeTitle}${ext}`;
@@ -145,7 +169,10 @@ function filenameFromUrl(url, contentType = "", customTitle = null) {
 }
 
 function getContentType(response) {
-  return (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  return (response.headers.get("content-type") || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
 }
 
 function isSocialMediaUrl(urlStr) {
@@ -153,15 +180,59 @@ function isSocialMediaUrl(urlStr) {
     const url = new URL(urlStr);
     const hostname = url.hostname.replace(/^www\./, "");
 
-    if (hostname.includes("cdninstagram.com") || hostname.includes("fbcdn.net") || hostname.includes("googlevideo.com")) {
+    // CDN links pe scraper mat chalao
+    if (
+      hostname.includes("cdninstagram.com") ||
+      hostname.includes("fbcdn.net") ||
+      hostname.includes("googlevideo.com") ||
+      hostname.includes("tiktokcdn.com") ||
+      hostname.includes("twimg.com")
+    ) {
       return false;
     }
 
-    const platforms = ["instagram.com", "facebook.com", "tiktok.com", "youtube.com", "youtu.be", "twitter.com", "x.com", "fb.watch"];
-    return platforms.some(p => hostname.includes(p));
+    const platforms = [
+      "instagram.com",
+      "facebook.com",
+      "tiktok.com",
+      "youtube.com",
+      "youtu.be",
+      "twitter.com",
+      "x.com",
+      "fb.watch"
+    ];
+    return platforms.some((p) => hostname.includes(p));
   } catch {
     return false;
   }
+}
+
+function makeDownloadId() {
+  return crypto.randomBytes(12).toString("hex"); // 24 char short id
+}
+
+function cacheExtraction(originalUrl, extractedData) {
+  const downloadId = makeDownloadId();
+  const payload = {
+    ...extractedData,
+    originalUrl,
+    downloadId,
+    createdAt: Date.now()
+  };
+
+  // 3 keys se cache – original, cdn, aur short id
+  extractionCache.set(originalUrl, payload);
+  extractionCache.set(extractedData.url, payload);
+  extractionCache.set(downloadId, payload);
+
+  // 15 min baad auto clean
+  setTimeout(() => {
+    extractionCache.delete(originalUrl);
+    extractionCache.delete(extractedData.url);
+    extractionCache.delete(downloadId);
+  }, 15 * 60 * 1000);
+
+  return payload;
 }
 
 async function extractDirectVideoUrl(url) {
@@ -176,49 +247,52 @@ async function extractDirectVideoUrl(url) {
     if (!output) throw new Error("Video file not found in post.");
 
     let directUrl = output.url;
-    let headers = { ...(output.http_headers || {}) };
+    let headers = output.http_headers || {};
+
+    delete headers["Host"];
+    delete headers["host"];
 
     if (!directUrl && output.requested_formats && output.requested_formats.length > 0) {
       directUrl = output.requested_formats[0].url;
       if (output.requested_formats[0].http_headers) {
-        headers = { ...output.requested_formats[0].http_headers };
+        headers = output.requested_formats[0].http_headers;
+        delete headers["Host"];
+        delete headers["host"];
       }
     }
-
-    delete headers["Host"];
-    delete headers["host"];
 
     if (!directUrl) throw new Error("Could not extract media stream.");
 
     return {
       url: directUrl,
       title: output.title || "Video",
-      headers
+      headers: headers
     };
   } catch (error) {
     console.error("Extractor error:", error.message);
-    throw new Error("Unable to extract video from this link. It might be private or unsupported.");
+    throw new Error(
+      "Unable to extract video from this link. It might be private or unsupported."
+    );
   }
-}
-
-function buildHeaders(extra = {}) {
-  const merged = { ...DEFAULT_HEADERS, ...extra };
-  delete merged["Host"];
-  delete merged["host"];
-  // Compression band rakho taaki Content-Length sahi rahe
-  delete merged["accept-encoding"];
-  merged["Accept-Encoding"] = "identity";
-  return merged;
 }
 
 async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   if (redirectCount > MAX_REDIRECTS) throw new Error("Too many redirects.");
   const url = await validateUrl(initialUrl);
 
+  const mergedHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "*/*",
+    ...(options.headers || {})
+  };
+  delete mergedHeaders["Host"];
+  delete mergedHeaders["host"];
+
   const response = await fetch(url, {
     ...options,
     redirect: "manual",
-    headers: buildHeaders(options.headers || {}),
+    headers: mergedHeaders,
     signal: options.signal
   });
 
@@ -232,189 +306,400 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
 }
 
 async function fetchCDN(targetUrl, method, headers, signal) {
-  return fetch(targetUrl, {
-    method,
-    headers: buildHeaders(headers),
+  const mergedHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "*/*",
+    ...headers
+  };
+  delete mergedHeaders["Host"];
+  delete mergedHeaders["host"];
+
+  return await fetch(targetUrl, {
+    method: method,
+    headers: mergedHeaders,
     redirect: "follow",
-    signal
+    signal: signal
   });
 }
 
-async function resolveTarget(rawUrl, saveToCache) {
-  const url = await validateUrl(rawUrl);
-  const originalUrl = url.toString();
-
-  if (extractionCache.has(originalUrl)) {
-    const cached = extractionCache.get(originalUrl);
-    return { originalUrl, targetUrl: cached.url, title: cached.title, headers: cached.headers, useCDN: true };
+/**
+ * FIX: CDN URLs me & hota hai. Agar frontend encodeURIComponent bhool jaye
+ * toh Express query ko kaat deta hai. Yeh function originalUrl se poora URL
+ * wapas banata hai.
+ */
+function extractRawUrlFromRequest(req) {
+  // 1) Short download id (best method)
+  if (req.query.id && typeof req.query.id === "string") {
+    return { type: "id", value: req.query.id.trim() };
   }
 
-  if (isSocialMediaUrl(originalUrl)) {
-    const data = await extractDirectVideoUrl(originalUrl);
-    if (saveToCache) {
-      extractionCache.set(originalUrl, data);
-      extractionCache.set(data.url, data);
-      setTimeout(() => {
-        extractionCache.delete(originalUrl);
-        extractionCache.delete(data.url);
-      }, 15 * 60 * 1000).unref();
+  // 2) Normal query.url
+  let rawUrl = req.query.url;
+
+  // 3) Agar URL adhuri lagi (kyunki & se cut hui), toh originalUrl se reconstruct karo
+  if (req.originalUrl && req.originalUrl.includes("url=")) {
+    const idx = req.originalUrl.indexOf("url=");
+    let full = req.originalUrl.substring(idx + 4);
+
+    // hash hatao
+    const hashIdx = full.indexOf("#");
+    if (hashIdx !== -1) full = full.substring(0, hashIdx);
+
+    // Agar ye longer / more complete hai toh isko use karo
+    try {
+      const decoded = decodeURIComponent(full);
+      if (!rawUrl || decoded.length > String(rawUrl).length) {
+        rawUrl = decoded;
+      }
+    } catch {
+      if (!rawUrl || full.length > String(rawUrl).length) {
+        rawUrl = full;
+      }
     }
-    return { originalUrl, targetUrl: data.url, title: data.title, headers: data.headers, useCDN: true };
   }
 
-  return { originalUrl, targetUrl: originalUrl, title: null, headers: {}, useCDN: false };
+  // Double-decoding safety (kabhi-kabhi frontend 2 baar encode kar deta hai)
+  if (typeof rawUrl === "string") {
+    let u = rawUrl.trim();
+    for (let i = 0; i < 2; i++) {
+      try {
+        if (u.includes("%")) {
+          const d = decodeURIComponent(u);
+          if (d === u) break;
+          u = d;
+        } else break;
+      } catch {
+        break;
+      }
+    }
+    rawUrl = u;
+  }
+
+  return { type: "url", value: rawUrl };
 }
 
-app.get("/health", (req, res) => res.json({ ok: true, service: "QuickSave", version: "2.7" }));
+app.get("/health", (req, res) =>
+  res.json({ ok: true, service: "QuickSave", version: "2.7" })
+);
 
 app.post("/api/inspect", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
-  if (!checkRateLimit(ip)) return res.status(429).json({ ok: false, message: "Too many requests. Please wait." });
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), INSPECT_TIMEOUT);
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({ ok: false, message: "Too many requests. Please wait." });
+  }
 
   try {
-    const { originalUrl, targetUrl, title, headers, useCDN } = await resolveTarget(req.body?.url, true);
+    const rawUrl = req.body?.url;
+    let url = await validateUrl(rawUrl);
+    let targetUrl = url.toString();
+    let extractedTitle = null;
+    let customHeaders = {};
+    let isSocial = isSocialMediaUrl(targetUrl);
+    let useCDNFetch = false;
+    let downloadId = null;
 
-    let response = null;
+    if (extractionCache.has(targetUrl)) {
+      const cached = extractionCache.get(targetUrl);
+      targetUrl = cached.url;
+      extractedTitle = cached.title;
+      customHeaders = cached.headers || {};
+      downloadId = cached.downloadId;
+      useCDNFetch = true;
+    } else if (isSocial) {
+      const extractedData = await extractDirectVideoUrl(targetUrl);
+      const cached = cacheExtraction(targetUrl, extractedData);
+
+      targetUrl = cached.url;
+      extractedTitle = cached.title;
+      customHeaders = cached.headers || {};
+      downloadId = cached.downloadId;
+      useCDNFetch = true;
+    } else {
+      // Non-social direct media link ke liye bhi id bana do
+      const fakeExtracted = {
+        url: targetUrl,
+        title: null,
+        headers: {}
+      };
+      const cached = cacheExtraction(targetUrl, fakeExtracted);
+      downloadId = cached.downloadId;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, INSPECT_TIMEOUT);
+
     try {
-      response = useCDN
-        ? await fetchCDN(targetUrl, "HEAD", headers, controller.signal)
-        : await fetchSafe(targetUrl, { method: "HEAD", signal: controller.signal });
-    } catch {
-      response = null;
-    }
+      let response;
+      try {
+        if (useCDNFetch) {
+          response = await fetchCDN(targetUrl, "HEAD", customHeaders, controller.signal);
+        } else {
+          response = await fetchSafe(targetUrl, {
+            method: "HEAD",
+            signal: controller.signal
+          });
+        }
+      } catch {
+        response = null;
+      }
 
-    let contentType = response ? getContentType(response) : "";
-    let contentLength = response ? Number(response.headers.get("content-length") || 0) : 0;
+      let contentType = response ? getContentType(response) : "";
+      let contentLength = response
+        ? Number(response.headers.get("content-length") || 0)
+        : 0;
 
-    if (!response || !response.ok || !contentType) {
-      response = useCDN
-        ? await fetchCDN(targetUrl, "GET", { ...headers, Range: "bytes=0-0" }, controller.signal)
-        : await fetchSafe(targetUrl, { method: "GET", headers: { Range: "bytes=0-0" }, signal: controller.signal });
+      if (!response || !response.ok || !contentType) {
+        if (useCDNFetch) {
+          response = await fetchCDN(
+            targetUrl,
+            "GET",
+            { ...customHeaders, Range: "bytes=0-0" },
+            controller.signal
+          );
+        } else {
+          response = await fetchSafe(targetUrl, {
+            method: "GET",
+            headers: { Range: "bytes=0-0" },
+            signal: controller.signal
+          });
+        }
+        contentType = getContentType(response);
+        // content-range se size nikalne ki koshish
+        const cr = response.headers.get("content-range");
+        if (cr && cr.includes("/")) {
+          const total = Number(cr.split("/")[1]);
+          if (!Number.isNaN(total) && total > 0) contentLength = total;
+        } else {
+          contentLength = Number(response.headers.get("content-length") || 0);
+        }
+        try {
+          await response.body?.cancel();
+        } catch {}
+      }
 
-      contentType = getContentType(response);
-      const range = response.headers.get("content-range"); // e.g. bytes 0-0/24850000
-      const totalFromRange = range && range.includes("/") ? Number(range.split("/")[1]) : 0;
-      contentLength = totalFromRange || Number(response.headers.get("content-length") || 0);
-      try { await response.body?.cancel(); } catch {}
-    }
+      if (!response.ok && response.status !== 206) {
+        return res.status(400).json({
+          ok: false,
+          type: "error",
+          message: `The media server returned HTTP ${response.status}.`
+        });
+      }
 
-    if (!response.ok) {
-      return res.status(400).json({ ok: false, type: "error", message: `The media server returned HTTP ${response.status}.` });
-    }
+      if (!ALLOWED_MIME.has(contentType) && !contentType.includes("video") && !contentType.includes("audio") && !contentType.includes("image")) {
+        return res.status(400).json({
+          ok: false,
+          type: "unsupported",
+          contentType,
+          message: "This URL does not point to a supported public media file."
+        });
+      }
 
-    if (!ALLOWED_MIME.has(contentType) && !contentType.includes("video")) {
-      return res.status(400).json({
-        ok: false,
-        type: "unsupported",
-        contentType,
-        message: "This URL does not point to a supported public media file."
+      if (contentLength && contentLength > MAX_BYTES) {
+        return res.status(400).json({
+          ok: false,
+          type: "too-large",
+          message: "This media file is larger than the 250 MB limit."
+        });
+      }
+
+      const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
+
+      return res.json({
+        ok: true,
+        type: "media",
+        // SHORT ID – frontend ko yahi use karna chahiye download ke liye
+        id: downloadId,
+        downloadUrl: `/api/download?id=${downloadId}`,
+        // backward compatibility
+        url: targetUrl,
+        originalUrl: url.toString(),
+        contentType: contentType || "video/mp4",
+        size: contentLength || null,
+        filename
       });
+    } finally {
+      clearTimeout(timer);
     }
-
-    if (contentLength && contentLength > MAX_BYTES) {
-      return res.status(400).json({ ok: false, type: "too-large", message: "This media file is larger than the 250 MB limit." });
-    }
-
-    return res.json({
-      ok: true,
-      type: "media",
-      url: targetUrl,
-      originalUrl,
-      contentType: contentType || "video/mp4",
-      size: contentLength || null,
-      filename: filenameFromUrl(targetUrl, contentType, title)
-    });
   } catch (error) {
     console.error("Inspect error:", error);
-    return res.status(400).json({ ok: false, type: "error", message: error.message || "Unable to process this URL." });
-  } finally {
-    clearTimeout(timer);
+    return res.status(400).json({
+      ok: false,
+      type: "error",
+      message: error.message || "Unable to process this URL."
+    });
   }
 });
 
 app.get("/api/download", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
-  if (!checkRateLimit(ip)) return res.status(429).json({ ok: false, message: "Too many requests. Please wait." });
-  if (!acquireDownload(ip)) return res.status(429).json({ ok: false, message: "Too many downloads are running. Please wait." });
-
-  const controller = new AbortController();
-  let idleTimer = null;
-  const resetIdle = () => {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT);
-  };
-
-  // MAIN FIX: req ki jagah res ka "close" event.
-  // Abort sirf tab hoga jab user ne sach mein connection tod diya ho.
-  res.on("close", () => {
-    clearTimeout(idleTimer);
-    if (!res.writableFinished) controller.abort();
-  });
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({ ok: false, message: "Too many requests. Please wait." });
+  }
+  if (!acquireDownload(ip)) {
+    return res
+      .status(429)
+      .json({ ok: false, message: "Too many downloads are running. Please wait." });
+  }
 
   try {
-    const { targetUrl, title, headers, useCDN } = await resolveTarget(req.query.url, false);
+    const parsed = extractRawUrlFromRequest(req);
+    console.log("[download] type=", parsed.type, " value_sample=", String(parsed.value).slice(0, 120));
 
-    const fetchHeaders = { ...headers };
-    if (req.headers.range) fetchHeaders["Range"] = req.headers.range;
+    let targetUrl = null;
+    let extractedTitle = null;
+    let customHeaders = {};
+    let useCDNFetch = false;
 
-    resetIdle();
-    const response = useCDN
-      ? await fetchCDN(targetUrl, "GET", fetchHeaders, controller.signal)
-      : await fetchSafe(targetUrl, { method: "GET", headers: fetchHeaders, signal: controller.signal });
-
-    // response.ok me 200 aur 206 dono aate hain
-    if (!response.ok) {
-      return res.status(400).json({ ok: false, message: `Media server returned HTTP ${response.status}.` });
-    }
-    if (!response.body) throw new Error("Media stream unavailable.");
-
-    const contentType = getContentType(response) || "video/mp4";
-    const contentLength = Number(response.headers.get("content-length") || 0);
-
-    if (contentLength && contentLength > MAX_BYTES) {
-      try { await response.body.cancel(); } catch {}
-      return res.status(413).json({ ok: false, message: "This file is larger than the 250 MB limit." });
-    }
-
-    const filename = filenameFromUrl(targetUrl, contentType, title);
-    const encodedName = encodeURIComponent(filename);
-
-    res.status(response.status);
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=UTF-8''${encodedName}`);
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Accept-Ranges", "bytes");
-    if (response.headers.has("content-length")) res.setHeader("Content-Length", response.headers.get("content-length"));
-    if (response.headers.has("content-range")) res.setHeader("Content-Range", response.headers.get("content-range"));
-
-    let total = 0;
-    const limiter = new Transform({
-      transform(chunk, _enc, cb) {
-        total += chunk.length;
-        resetIdle();
-        if (total > MAX_BYTES) return cb(new Error("Download exceeded the limit."));
-        cb(null, chunk);
+    if (parsed.type === "id") {
+      const cached = extractionCache.get(parsed.value);
+      if (!cached) {
+        return res.status(410).json({
+          ok: false,
+          message: "Download link expired. Please tap Get media again."
+        });
       }
+      targetUrl = cached.url;
+      extractedTitle = cached.title;
+      customHeaders = cached.headers || {};
+      useCDNFetch = true;
+    } else {
+      // URL-based (compatibility + reconstruction)
+      if (!parsed.value) {
+        return res.status(400).json({ ok: false, message: "URL is required." });
+      }
+
+      // Pehle cache check (original ya cdn dono)
+      if (extractionCache.has(parsed.value)) {
+        const cached = extractionCache.get(parsed.value);
+        targetUrl = cached.url;
+        extractedTitle = cached.title;
+        customHeaders = cached.headers || {};
+        useCDNFetch = true;
+      } else {
+        // validate only when we really need to fetch by URL
+        let validated;
+        try {
+          validated = await validateUrl(parsed.value);
+        } catch (e) {
+          console.error("[download] validate failed for:", String(parsed.value).slice(0, 200));
+          throw e;
+        }
+        targetUrl = validated.toString();
+
+        if (isSocialMediaUrl(targetUrl)) {
+          const extractedData = await extractDirectVideoUrl(targetUrl);
+          const cached = cacheExtraction(targetUrl, extractedData);
+          targetUrl = cached.url;
+          extractedTitle = cached.title;
+          customHeaders = cached.headers || {};
+          useCDNFetch = true;
+        }
+      }
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, DOWNLOAD_TIMEOUT);
+
+    req.on("close", () => {
+      controller.abort();
+      clearTimeout(timer);
     });
 
-    // pipeline backpressure aur errors khud handle karta hai
-    await pipeline(Readable.fromWeb(response.body), limiter, res);
-  } catch (error) {
-    const clientLeft = error.code === "ERR_STREAM_PREMATURE_CLOSE" || (error.name === "AbortError" && res.destroyed);
-    if (!clientLeft) console.error("Download error:", error);
+    try {
+      // Range support (Android download manager ke liye zaroori)
+      let fetchHeaders = { ...customHeaders };
+      if (req.headers.range) {
+        fetchHeaders["Range"] = req.headers.range;
+      }
 
+      let response;
+      if (useCDNFetch) {
+        response = await fetchCDN(targetUrl, "GET", fetchHeaders, controller.signal);
+      } else {
+        response = await fetchSafe(targetUrl, {
+          method: "GET",
+          headers: fetchHeaders,
+          signal: controller.signal
+        });
+      }
+
+      // 200 OK ya 206 Partial Content dono allow
+      if (!response.ok && response.status !== 206) {
+        return res.status(400).json({
+          ok: false,
+          message: `Media server returned HTTP ${response.status}.`
+        });
+      }
+
+      const contentType = getContentType(response) || "video/mp4";
+      const contentLength = Number(response.headers.get("content-length") || 0);
+
+      if (contentLength && contentLength > MAX_BYTES) {
+        return res.status(413).json({
+          ok: false,
+          message: "This file is larger than the 250 MB limit."
+        });
+      }
+
+      const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
+      const safeFilename = filename.replace(/[\r\n"']/g, "");
+      const encodedFilename = encodeURIComponent(safeFilename);
+
+      res.status(response.status);
+      res.setHeader("Content-Type", contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+      );
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Accept-Ranges", "bytes");
+
+      if (response.headers.has("content-length")) {
+        res.setHeader("Content-Length", response.headers.get("content-length"));
+      }
+      if (response.headers.has("content-range")) {
+        res.setHeader("Content-Range", response.headers.get("content-range"));
+      }
+
+      let total = 0;
+      if (!response.body) throw new Error("Media stream unavailable.");
+
+      for await (const chunk of response.body) {
+        total += chunk.length;
+        if (total > MAX_BYTES) {
+          controller.abort();
+          if (!res.headersSent) {
+            return res.status(413).json({ ok: false, message: "Download exceeded the limit." });
+          }
+          res.destroy();
+          return;
+        }
+        if (!res.write(chunk)) {
+          await new Promise((resolve) => res.once("drain", resolve));
+        }
+      }
+      res.end();
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    console.error("Download error:", error);
     if (!res.headersSent) {
       return res.status(400).json({
         ok: false,
-        message: error.name === "AbortError" ? "Download timed out." : error.message || "Unable to download this media."
+        message:
+          error.name === "AbortError"
+            ? "Download timed out."
+            : error.message || "Unable to download this media."
       });
     }
     res.destroy();
   } finally {
-    clearTimeout(idleTimer);
     releaseDownload(ip);
   }
 });
