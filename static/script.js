@@ -4,20 +4,34 @@ let room = "";
 let isAlive = true;
 
 // Agora Variables
-const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4"; // <-- Yahan apna Agora App ID dalein
+const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4";
 let rtcClient;
 let localAudioTrack;
 
 async function joinRoom() {
     username = document.getElementById("username").value.trim();
-    room = document.getElementById("room").value.trim();
+    let roomInput = document.getElementById("room").value.trim();
     
-    if(!username || !room) return alert("Name and Room code required!");
+    if(!username) return alert("Codename is required!");
+
+    // Random Room Matchmaking Logic
+    if(!roomInput) {
+        document.getElementById("join-section").innerHTML = '<p class="text-green-400 font-bold text-xl animate-pulse text-center mt-10">SEARCHING FOR MATCH...</p>';
+        try {
+            const response = await fetch('/get_random_room');
+            const data = await response.json();
+            room = data.room_id;
+        } catch (error) {
+            return alert("Server error! Please try again.");
+        }
+    } else {
+        room = roomInput;
+    }
 
     document.getElementById("join-section").classList.add("hidden");
     document.getElementById("game-section").classList.remove("hidden");
 
-    // 1. Connect WebSocket
+    // WebSocket Connect
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${window.location.host}/ws/${room}/${username}`);
 
@@ -25,7 +39,7 @@ async function joinRoom() {
         handleServerMessage(JSON.parse(event.data));
     };
 
-    // 2. Connect Voice Chat (Agora)
+    // Agora Connect
     await initAgora(room, username);
 }
 
@@ -40,8 +54,15 @@ async function initAgora(channelName, uid) {
     await rtcClient.join(AGORA_APP_ID, channelName, null, uid);
     localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
     
-    // Start with mic Muted
-    await localAudioTrack.setMuted(true);
+    // Start with mic ON by default!
+    await localAudioTrack.setMuted(false);
+    
+    // Update UI directly to show MIC ON
+    const micUI = document.getElementById("mic-status");
+    micUI.innerHTML = '<div class="w-2 h-2 rounded-full bg-white animate-pulse"></div><span>MIC ON</span>';
+    micUI.classList.remove("bg-red-500/80", "border-red-500");
+    micUI.classList.add("bg-green-500/80", "border-green-500");
+    micUI.style.boxShadow = "0 0 10px rgba(0,255,0,0.5)";
 }
 
 function handleServerMessage(data) {
@@ -59,22 +80,19 @@ function handleServerMessage(data) {
     }
     
     else if (data.type === "turn_update") {
-        // Kisi ki turn aayi
         alertBox.innerText = data.message;
         
         if (data.current_player === username && isAlive) {
-            // Meri baari! Mic On karo.
             setMicState(true);
             document.getElementById("turn-controls").classList.remove("hidden");
         } else {
-            // Dusre ki baari. Mera Mic Off rakho.
             setMicState(false);
             document.getElementById("turn-controls").classList.add("hidden");
         }
     }
     
     else if (data.type === "start_voting") {
-        setMicState(false); // Voting ke time silence
+        setMicState(false); 
         document.getElementById("turn-controls").classList.add("hidden");
         
         if (isAlive) {
@@ -101,23 +119,22 @@ function handleServerMessage(data) {
             setMicState(false);
             alertBox.innerText = "You are DEAD. You can only chat now.";
         } else if (isAlive) {
-            setMicState(true); // PANIC MODE - Unmute alive players
+            setMicState(true);
         }
     }
 
     else if (data.type === "new_round") {
         msgDiv.innerHTML += `<p class="text-blue-400 font-bold text-center mt-2">-- ROUND 2 --</p>`;
-        setMicState(false); // Sannata wapas
+        setMicState(false);
     }
 
     else if (data.type === "game_over") {
         alertBox.innerText = data.message;
-        alertBox.className = data.winner === 'spy' ? "text-red-500 font-bold text-xl h-6" : "text-green-500 font-bold text-xl h-6";
+        alertBox.className = data.winner === 'spy' ? "text-red-500 font-bold text-xl h-6 text-center" : "text-green-500 font-bold text-xl h-6 text-center";
         document.getElementById("vote-area").classList.add("hidden");
-        setMicState(true); // Game over me sab aapas me baat kar sakte hain
+        setMicState(true);
     }
 
-    // Auto-scroll chat to bottom
     msgDiv.scrollTop = msgDiv.scrollHeight;
 }
 
@@ -127,12 +144,16 @@ async function setMicState(unmute) {
     
     if (unmute) {
         await localAudioTrack.setMuted(false);
-        micUI.innerText = "MIC ON";
-        micUI.classList.replace("bg-red-500", "bg-green-500");
+        micUI.innerHTML = '<div class="w-2 h-2 rounded-full bg-white animate-pulse"></div><span>MIC ON</span>';
+        micUI.classList.remove("bg-red-500/80", "border-red-500");
+        micUI.classList.add("bg-green-500/80", "border-green-500");
+        micUI.style.boxShadow = "0 0 10px rgba(0,255,0,0.5)";
     } else {
         await localAudioTrack.setMuted(true);
-        micUI.innerText = "MIC OFF";
-        micUI.classList.replace("bg-green-500", "bg-red-500");
+        micUI.innerHTML = '<div class="w-2 h-2 rounded-full bg-white"></div><span>MIC OFF</span>';
+        micUI.classList.remove("bg-green-500/80", "border-green-500");
+        micUI.classList.add("bg-red-500/80", "border-red-500");
+        micUI.style.boxShadow = "0 0 10px rgba(255,0,0,0.5)";
     }
 }
 
