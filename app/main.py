@@ -4,19 +4,211 @@ from fastapi.responses import HTMLResponse
 import json
 import random
 import asyncio
+import time
 
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 rooms = {}
+active_clients = {}
+
 word_pairs = [
     {"civilian": "Apple", "spy": "Mango"},
     {"civilian": "School", "spy": "College"},
     {"civilian": "Car", "spy": "Bike"},
     {"civilian": "Dog", "spy": "Cat"},
     {"civilian": "Pizza", "spy": "Burger"},
-    {"civilian": "River", "spy": "Lake"}
+    {"civilian": "River", "spy": "Lake"},
+    {"civilian": "Mountain", "spy": "Hill"},
+    {"civilian": "Ocean", "spy": "Sea"},
+    {"civilian": "Sun", "spy": "Moon"},
+    {"civilian": "Star", "spy": "Planet"},
+    {"civilian": "Tree", "spy": "Bush"},
+    {"civilian": "Flower", "spy": "Leaf"},
+    {"civilian": "Computer", "spy": "Laptop"},
+    {"civilian": "Phone", "spy": "Tablet"},
+    {"civilian": "Television", "spy": "Radio"},
+    {"civilian": "Book", "spy": "Magazine"},
+    {"civilian": "Pen", "spy": "Pencil"},
+    {"civilian": "Paper", "spy": "Notebook"},
+    {"civilian": "Chair", "spy": "Sofa"},
+    {"civilian": "Table", "spy": "Desk"},
+    {"civilian": "Door", "spy": "Window"},
+    {"civilian": "House", "spy": "Apartment"},
+    {"civilian": "City", "spy": "Village"},
+    {"civilian": "Country", "spy": "State"},
+    {"civilian": "Shirt", "spy": "T-shirt"},
+    {"civilian": "Pants", "spy": "Jeans"},
+    {"civilian": "Shoes", "spy": "Boots"},
+    {"civilian": "Hat", "spy": "Cap"},
+    {"civilian": "Glasses", "spy": "Goggles"},
+    {"civilian": "Watch", "spy": "Clock"},
+    {"civilian": "Gold", "spy": "Silver"},
+    {"civilian": "Diamond", "spy": "Ruby"},
+    {"civilian": "Coffee", "spy": "Tea"},
+    {"civilian": "Water", "spy": "Juice"},
+    {"civilian": "Milk", "spy": "Butter"},
+    {"civilian": "Bread", "spy": "Toast"},
+    {"civilian": "Cake", "spy": "Pastry"},
+    {"civilian": "Chocolate", "spy": "Candy"},
+    {"civilian": "Chicken", "spy": "Fish"},
+    {"civilian": "Egg", "spy": "Meat"},
+    {"civilian": "Potato", "spy": "Tomato"},
+    {"civilian": "Onion", "spy": "Garlic"},
+    {"civilian": "Doctor", "spy": "Nurse"},
+    {"civilian": "Teacher", "spy": "Student"},
+    {"civilian": "Police", "spy": "Army"},
+    {"civilian": "King", "spy": "Queen"},
+    {"civilian": "Prince", "spy": "Princess"},
+    {"civilian": "Actor", "spy": "Director"},
+    {"civilian": "Singer", "spy": "Dancer"},
+    {"civilian": "Piano", "spy": "Guitar"},
+    {"civilian": "Flute", "spy": "Violin"},
+    {"civilian": "Football", "spy": "Cricket"},
+    {"civilian": "Tennis", "spy": "Badminton"},
+    {"civilian": "Chess", "spy": "Ludo"},
+    {"civilian": "Running", "spy": "Walking"},
+    {"civilian": "Swimming", "spy": "Diving"},
+    {"civilian": "Summer", "spy": "Winter"},
+    {"civilian": "Rain", "spy": "Snow"},
+    {"civilian": "Wind", "spy": "Storm"},
+    {"civilian": "Fire", "spy": "Smoke"},
+    {"civilian": "Red", "spy": "Pink"},
+    {"civilian": "Blue", "spy": "Green"},
+    {"civilian": "Black", "spy": "White"},
+    {"civilian": "Yellow", "spy": "Orange"},
+    {"civilian": "Circle", "spy": "Square"},
+    {"civilian": "Triangle", "spy": "Rectangle"},
+    {"civilian": "Happy", "spy": "Sad"},
+    {"civilian": "Angry", "spy": "Cry"},
+    {"civilian": "Laugh", "spy": "Smile"},
+    {"civilian": "Love", "spy": "Hate"},
+    {"civilian": "Friend", "spy": "Enemy"},
+    {"civilian": "Brother", "spy": "Sister"},
+    {"civilian": "Father", "spy": "Mother"},
+    {"civilian": "Uncle", "spy": "Aunt"},
+    {"civilian": "Boy", "spy": "Girl"},
+    {"civilian": "Man", "spy": "Woman"},
+    {"civilian": "Baby", "spy": "Child"},
+    {"civilian": "Eye", "spy": "Ear"},
+    {"civilian": "Nose", "spy": "Mouth"},
+    {"civilian": "Hand", "spy": "Foot"},
+    {"civilian": "Hair", "spy": "Nail"},
+    {"civilian": "Heart", "spy": "Brain"},
+    {"civilian": "Blood", "spy": "Bone"},
+    {"civilian": "Hospital", "spy": "Clinic"},
+    {"civilian": "Bank", "spy": "ATM"},
+    {"civilian": "Market", "spy": "Mall"},
+    {"civilian": "Park", "spy": "Garden"},
+    {"civilian": "Zoo", "spy": "Museum"},
+    {"civilian": "Cinema", "spy": "Theatre"},
+    {"civilian": "Train", "spy": "Bus"},
+    {"civilian": "Airplane", "spy": "Helicopter"},
+    {"civilian": "Ship", "spy": "Boat"},
+    {"civilian": "Bicycle", "spy": "Scooter"},
+    {"civilian": "Road", "spy": "Street"},
+    {"civilian": "Bridge", "spy": "Tunnel"},
+    {"civilian": "Ticket", "spy": "Pass"},
+    {"civilian": "Map", "spy": "Compass"},
+    {"civilian": "Key", "spy": "Lock"},
+    {"civilian": "Sword", "spy": "Knife"},
+    {"civilian": "Gun", "spy": "Rifle"},
+    {"civilian": "Bomb", "spy": "Grenade"},
+    {"civilian": "Mirror", "spy": "Glass"},
+    {"civilian": "Bottle", "spy": "Cup"},
+    {"civilian": "Plate", "spy": "Bowl"},
+    {"civilian": "Spoon", "spy": "Fork"},
+    {"civilian": "Soap", "spy": "Shampoo"},
+    {"civilian": "Towel", "spy": "Napkin"},
+    {"civilian": "Bed", "spy": "Cot"},
+    {"civilian": "Pillow", "spy": "Cushion"},
+    {"civilian": "Blanket", "spy": "Quilt"},
+    {"civilian": "Light", "spy": "Bulb"},
+    {"civilian": "Fan", "spy": "AC"},
+    {"civilian": "Heater", "spy": "Cooler"},
+    {"civilian": "Camera", "spy": "Lens"},
+    {"civilian": "Photo", "spy": "Video"},
+    {"civilian": "Movie", "spy": "Drama"},
+    {"civilian": "Song", "spy": "Music"},
+    {"civilian": "Poem", "spy": "Story"},
+    {"civilian": "Letter", "spy": "Email"},
+    {"civilian": "Newspaper", "spy": "Magazine"},
+    {"civilian": "News", "spy": "Gossip"},
+    {"civilian": "Internet", "spy": "Wifi"},
+    {"civilian": "Website", "spy": "App"},
+    {"civilian": "Game", "spy": "Sport"},
+    {"civilian": "Goal", "spy": "Point"},
+    {"civilian": "Win", "spy": "Lose"},
+    {"civilian": "Prize", "spy": "Award"},
+    {"civilian": "Money", "spy": "Coin"},
+    {"civilian": "Rich", "spy": "Poor"},
+    {"civilian": "Job", "spy": "Business"},
+    {"civilian": "Office", "spy": "Factory"},
+    {"civilian": "Worker", "spy": "Boss"},
+    {"civilian": "Salary", "spy": "Bonus"},
+    {"civilian": "Tax", "spy": "Bill"},
+    {"civilian": "Price", "spy": "Cost"},
+    {"civilian": "Buy", "spy": "Sell"},
+    {"civilian": "Shop", "spy": "Store"},
+    {"civilian": "Customer", "spy": "Client"},
+    {"civilian": "Lawyer", "spy": "Judge"},
+    {"civilian": "Court", "spy": "Jail"},
+    {"civilian": "Thief", "spy": "Robber"},
+    {"civilian": "Crime", "spy": "Sin"},
+    {"civilian": "Truth", "spy": "Lie"},
+    {"civilian": "Secret", "spy": "Mystery"},
+    {"civilian": "Magic", "spy": "Illusion"},
+    {"civilian": "Ghost", "spy": "Spirit"},
+    {"civilian": "Angel", "spy": "Demon"},
+    {"civilian": "God", "spy": "Devil"},
+    {"civilian": "Heaven", "spy": "Hell"},
+    {"civilian": "Life", "spy": "Death"},
+    {"civilian": "Birth", "spy": "Funeral"},
+    {"civilian": "Marriage", "spy": "Divorce"},
+    {"civilian": "Party", "spy": "Festival"},
+    {"civilian": "Gift", "spy": "Present"},
+    {"civilian": "Balloon", "spy": "Kite"},
+    {"civilian": "Toy", "spy": "Doll"},
+    {"civilian": "Puppy", "spy": "Kitten"},
+    {"civilian": "Tiger", "spy": "Lion"},
+    {"civilian": "Elephant", "spy": "Rhino"},
+    {"civilian": "Monkey", "spy": "Ape"},
+    {"civilian": "Bear", "spy": "Wolf"},
+    {"civilian": "Snake", "spy": "Lizard"},
+    {"civilian": "Bird", "spy": "Bat"},
+    {"civilian": "Eagle", "spy": "Hawk"},
+    {"civilian": "Parrot", "spy": "Pigeon"},
+    {"civilian": "Duck", "spy": "Swan"},
+    {"civilian": "Frog", "spy": "Toad"},
+    {"civilian": "Fish", "spy": "Shark"},
+    {"civilian": "Whale", "spy": "Dolphin"},
+    {"civilian": "Ant", "spy": "Bee"},
+    {"civilian": "Spider", "spy": "Scorpion"},
+    {"civilian": "Mosquito", "spy": "Fly"},
+    {"civilian": "Butterfly", "spy": "Moth"},
+    {"civilian": "Rose", "spy": "Lotus"},
+    {"civilian": "Jasmine", "spy": "Lily"},
+    {"civilian": "Sunflower", "spy": "Marigold"},
+    {"civilian": "Grass", "spy": "Weed"},
+    {"civilian": "Forest", "spy": "Jungle"},
+    {"civilian": "Desert", "spy": "Sand"},
+    {"civilian": "Rock", "spy": "Stone"},
+    {"civilian": "Dust", "spy": "Dirt"},
+    {"civilian": "Mud", "spy": "Clay"},
+    {"civilian": "Ice", "spy": "Snow"},
+    {"civilian": "Fire", "spy": "Flame"},
+    {"civilian": "Heat", "spy": "Cold"},
+    {"civilian": "Day", "spy": "Night"},
+    {"civilian": "Morning", "spy": "Evening"},
+    {"civilian": "Today", "spy": "Tomorrow"},
+    {"civilian": "Week", "spy": "Month"},
+    {"civilian": "Year", "spy": "Decade"},
+    {"civilian": "Century", "spy": "Millennium"},
+    {"civilian": "Past", "spy": "Future"},
+    {"civilian": "History", "spy": "Science"},
+    {"civilian": "Math", "spy": "Physics"},
+    {"civilian": "English", "spy": "Hindi"}
 ]
 
 class RoomManager:
@@ -39,11 +231,17 @@ async def get():
         return HTMLResponse(f.read())
 
 @app.get("/get_active_users")
-async def get_active_users():
-    total_users = sum(len(r['connections']) for r in manager.rooms.values())
-    return {"active_users": total_users}
+async def get_active_users(client_id: str = None):
+    current_time = time.time()
+    if client_id:
+        active_clients[client_id] = current_time
+        
+    stale_clients = [cid for cid, last_seen in active_clients.items() if current_time - last_seen > 15]
+    for cid in stale_clients:
+        del active_clients[cid]
+        
+    return {"active_users": len(active_clients)}
 
-# Capacity ke hisaab se random room dhundho
 @app.get("/get_random_room/{capacity}")
 async def get_random_room(capacity: int):
     for room_id, room_data in manager.rooms.items():
@@ -62,7 +260,6 @@ async def create_new_room():
         if new_room not in manager.rooms:
             return {"room_id": new_room}
 
-# WebSocket me capacity parameter add kiya gaya hai
 @app.websocket("/ws/{room_id}/{username}/{capacity}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str, capacity: int):
     await websocket.accept()
@@ -93,7 +290,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str, 
         "text": f"{username} joined. ({len(room['connections'])}/{room['capacity']})"
     })
 
-    # Game Start condition updated dynamically (4 or 6)
     if len(room['connections']) == room['capacity'] and room['state'] == 'waiting':
         room['state'] = 'playing'
         pair = random.choice(word_pairs)
