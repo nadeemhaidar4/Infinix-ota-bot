@@ -37,6 +37,20 @@ async def get():
     with open("static/index.html", "r") as f:
         return HTMLResponse(f.read())
 
+# Automatic Matchmaking Route
+@app.get("/get_random_room")
+async def get_random_room():
+    # Pehle khali room dhundho
+    for room_id, room_data in manager.rooms.items():
+        if room_data['state'] == 'waiting' and len(room_data['connections']) < 4:
+            return {"room_id": room_id}
+            
+    # Agar khali nahi hai to naya random room banao
+    while True:
+        new_room = str(random.randint(1000, 9999))
+        if new_room not in manager.rooms:
+            return {"room_id": new_room}
+
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     await websocket.accept()
@@ -110,7 +124,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
                 voted_for = parsed_data["vote"]
                 room['votes'][username] = voted_for
                 
-                # Check if all alive players have voted
                 if len(room['votes']) == len(room['alive_list']):
                     await calculate_votes(room_id)
 
@@ -134,31 +147,26 @@ async def calculate_votes(room_id):
     room = manager.rooms[room_id]
     votes = list(room['votes'].values())
     
-    # Sabse zyada vote kisko mile (Simple logic: set me max count)
     eliminated_player = max(set(votes), key=votes.count)
     eliminated_role = room['players'][eliminated_player]['role']
     
     if eliminated_role == 'spy':
-        # SPY KILLED -> CIVILIANS WIN
         room['state'] = 'game_over'
         await manager.broadcast(room_id, {
             "type": "game_over", "winner": "civilians", 
             "message": f"🎉 {eliminated_player} was the SPY! Civilians WIN!"
         })
     else:
-        # CIVILIAN KILLED
         room['players'][eliminated_player]['is_alive'] = False
         room['alive_list'].remove(eliminated_player)
         
         if len(room['alive_list']) <= 2:
-            # 1 Spy, 1 Civilian left -> SPY WINS
             room['state'] = 'game_over'
             await manager.broadcast(room_id, {
                 "type": "game_over", "winner": "spy",
                 "message": f"💀 {eliminated_player} was a Civilian. Only 2 left. SPY WINS!"
             })
         else:
-            # REACTION PHASE (10 Secs Chaos)
             await manager.broadcast(room_id, {
                 "type": "reaction_phase", 
                 "dead_player": eliminated_player,
@@ -167,7 +175,6 @@ async def calculate_votes(room_id):
             
             await asyncio.sleep(10)
             
-            # Start Next Round
             room['turn_index'] = 0
             room['state'] = 'playing'
             await manager.broadcast(room_id, {"type": "new_round"})
