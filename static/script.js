@@ -8,15 +8,30 @@ const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4";
 let rtcClient;
 let localAudioTrack;
 
-async function joinRoom() {
+// Active Users Fetcher
+async function fetchActiveUsers() {
+    try {
+        const response = await fetch('/get_active_users');
+        const data = await response.json();
+        document.getElementById('active-users-count').innerText = data.active_users;
+    } catch (error) {
+        console.log("Could not fetch active users");
+    }
+}
+// Page load hote hi aur har 5 second me update karo
+window.onload = fetchActiveUsers;
+setInterval(fetchActiveUsers, 5000);
+
+
+// 3 Modes: 'random', 'create', 'join'
+async function joinRoom(mode) {
     username = document.getElementById("username").value.trim();
-    let roomInput = document.getElementById("room").value.trim();
-    
     if(!username) return alert("Codename is required!");
 
-    // Random Room Matchmaking Logic
-    if(!roomInput) {
-        document.getElementById("join-section").innerHTML = '<p class="text-green-400 font-bold text-xl animate-pulse text-center mt-10">SEARCHING FOR MATCH...</p>';
+    const joinSection = document.getElementById("join-section");
+
+    if (mode === 'random') {
+        joinSection.innerHTML = '<p class="text-green-400 font-bold text-xl animate-pulse text-center mt-10">SEARCHING FOR MATCH...</p>';
         try {
             const response = await fetch('/get_random_room');
             const data = await response.json();
@@ -24,12 +39,27 @@ async function joinRoom() {
         } catch (error) {
             return alert("Server error! Please try again.");
         }
-    } else {
-        room = roomInput;
+    } 
+    else if (mode === 'create') {
+        joinSection.innerHTML = '<p class="text-blue-400 font-bold text-xl animate-pulse text-center mt-10">CREATING ROOM...</p>';
+        try {
+            const response = await fetch('/create_new_room');
+            const data = await response.json();
+            room = data.room_id;
+        } catch (error) {
+            return alert("Server error! Please try again.");
+        }
+    }
+    else if (mode === 'join') {
+        let code = prompt("Enter 4-Digit Room ID to join your friends:");
+        if(!code || code.trim() === "") return; // User cancelled
+        room = code.trim();
     }
 
+    // UI Change
     document.getElementById("join-section").classList.add("hidden");
     document.getElementById("game-section").classList.remove("hidden");
+    document.getElementById("current-room-display").innerText = `(ROOM: ${room})`;
 
     // WebSocket Connect
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -57,7 +87,6 @@ async function initAgora(channelName, uid) {
     // Start with mic ON by default!
     await localAudioTrack.setMuted(false);
     
-    // Update UI directly to show MIC ON
     const micUI = document.getElementById("mic-status");
     micUI.innerHTML = '<div class="w-2 h-2 rounded-full bg-white animate-pulse"></div><span>MIC ON</span>';
     micUI.classList.remove("bg-red-500/80", "border-red-500");
