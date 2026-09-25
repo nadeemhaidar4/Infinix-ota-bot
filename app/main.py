@@ -7,7 +7,6 @@ import asyncio
 
 app = FastAPI()
 
-# Frontend static files serve karne ke liye
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 rooms = {}
@@ -15,7 +14,9 @@ word_pairs = [
     {"civilian": "Apple", "spy": "Mango"},
     {"civilian": "School", "spy": "College"},
     {"civilian": "Car", "spy": "Bike"},
-    {"civilian": "Dog", "spy": "Cat"}
+    {"civilian": "Dog", "spy": "Cat"},
+    {"civilian": "Pizza", "spy": "Burger"},
+    {"civilian": "River", "spy": "Lake"}
 ]
 
 class RoomManager:
@@ -37,29 +38,23 @@ async def get():
     with open("static/index.html", "r") as f:
         return HTMLResponse(f.read())
 
-# API: Active Users Count
 @app.get("/get_active_users")
 async def get_active_users():
-    total_users = 0
-    for room_data in manager.rooms.values():
-        total_users += len(room_data['connections'])
+    total_users = sum(len(r['connections']) for r in manager.rooms.values())
     return {"active_users": total_users}
 
-# API: Random Matchmaking
-@app.get("/get_random_room")
-async def get_random_room():
-    # Pehle khali room dhundho
+# Capacity ke hisaab se random room dhundho
+@app.get("/get_random_room/{capacity}")
+async def get_random_room(capacity: int):
     for room_id, room_data in manager.rooms.items():
-        if room_data['state'] == 'waiting' and len(room_data['connections']) < 4:
+        if room_data['state'] == 'waiting' and room_data['capacity'] == capacity and len(room_data['connections']) < capacity:
             return {"room_id": room_id}
             
-    # Agar khali nahi hai to naya random room banao
     while True:
         new_room = str(random.randint(1000, 9999))
         if new_room not in manager.rooms:
             return {"room_id": new_room}
 
-# API: Create Specific New Room
 @app.get("/create_new_room")
 async def create_new_room():
     while True:
@@ -67,8 +62,9 @@ async def create_new_room():
         if new_room not in manager.rooms:
             return {"room_id": new_room}
 
-@app.websocket("/ws/{room_id}/{username}")
-async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
+# WebSocket me capacity parameter add kiya gaya hai
+@app.websocket("/ws/{room_id}/{username}/{capacity}")
+async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str, capacity: int):
     await websocket.accept()
 
     if room_id not in manager.rooms:
@@ -78,12 +74,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
             'alive_list': [],
             'turn_index': 0,
             'votes': {},
-            'state': 'waiting'
+            'state': 'waiting',
+            'capacity': capacity
         }
     
     room = manager.rooms[room_id]
     
-    if len(room['connections']) >= 4:
+    if len(room['connections']) >= room['capacity']:
         await websocket.send_text(json.dumps({"type": "error", "message": "Room is full!"}))
         await websocket.close()
         return
@@ -93,11 +90,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     
     await manager.broadcast(room_id, {
         "type": "chat", "sender": "System", 
-        "text": f"{username} joined. ({len(room['connections'])}/4)"
+        "text": f"{username} joined. ({len(room['connections'])}/{room['capacity']})"
     })
 
-    # Auto-start Game when 4 players join
-    if len(room['connections']) == 4 and room['state'] == 'waiting':
+    # Game Start condition updated dynamically (4 or 6)
+    if len(room['connections']) == room['capacity'] and room['state'] == 'waiting':
         room['state'] = 'playing'
         pair = random.choice(word_pairs)
         spy_username = random.choice(list(room['players'].keys()))
@@ -149,7 +146,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
         if username in room['alive_list']:
             room['alive_list'].remove(username)
         
-        # Clean up empty rooms
         if len(room['connections']) == 0:
             del manager.rooms[room_id]
         else:
