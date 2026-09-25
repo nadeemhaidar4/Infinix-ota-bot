@@ -4,14 +4,13 @@ let room = "";
 let isAlive = true;
 let userCapacity = 4;
 
-const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4"; // Apna Agora ID
+const AGORA_APP_ID = "1c843bac45114149a3c327bd6d6320d4";
 let rtcClient;
 let localAudioTrack;
 
 let currentTimerInterval;
 let currentTimeout;
 
-// Unique ID for Live Count
 const myClientId = Math.random().toString(36).substring(2, 15);
 
 // --- Sound Function ---
