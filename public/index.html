@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="QuickSave">
   <meta property="og:title" content="QuickSave - Free Instagram Facebook Twitter Video Downloader">
-  <meta property="og:description" content="Download Instagram Reels, Facebook videos, Twitter clips for free. No signup needed.">
+  <meta property="og:description" content="Download Instagram Reels, Facebook videos, Twitter clips for free.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="/icon-192.png">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -20,19 +20,25 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <title>QuickSave — Free Instagram Facebook Twitter Video Downloader</title>
   <link rel="stylesheet" href="/styles.css">
-
-  <!-- ══════════════════════════════════════
-       MONETAG - MULTITAG (All-in-one)
-       Browser + PWA dono mein kaam karega
-  ══════════════════════════════════════ -->
-  <script src="https://quge5.com/88/tag.min.js"
-          data-zone="287137"
-          async
-          data-cfasync="false">
+  <script>
+    if (localStorage.getItem("qs_ads_disabled") !== "true") {
+      var s = document.createElement("script");
+      s.src = "https://quge5.com/88/tag.min.js";
+      s.setAttribute("data-zone","287137");
+      s.async = true;
+      s.setAttribute("data-cfasync","false");
+      document.head.appendChild(s);
+    }
   </script>
-
 </head>
 <body>
+
+<!-- Update Banner -->
+<div id="updateBanner" class="update-banner hide">
+  <span>🆕 New version available!</span>
+  <button id="updateNowBtn" class="update-btn">Update Now</button>
+</div>
+
 <div class="orb o1"></div>
 <div class="orb o2"></div>
 
@@ -48,7 +54,7 @@
   </div>
 </div>
 
-<!-- Interstitial Ad - PWA ke liye -->
+<!-- Interstitial Ad -->
 <div id="interstitialAd" class="interstitial-overlay hide">
   <div class="interstitial-box">
     <div class="interstitial-header">
@@ -58,18 +64,23 @@
       </button>
     </div>
     <div class="interstitial-content">
-      <p style="color:#555;font-size:13px;text-align:center;">
-        Advertisement Loading…
-      </p>
+      <p style="color:#555;font-size:13px;text-align:center;">Advertisement Loading…</p>
     </div>
   </div>
 </div>
 
 <main>
   <nav>
-    <a class="brand" href="/"><b>↧</b>Quick<span>Save</span></a>
+    <!-- Better Logo -->
+    <a class="brand" href="/">
+      <div class="brand-icon">↧</div>
+      <div class="brand-text">
+        Quick<span>Save</span>
+        <small>VIDEO DOWNLOADER</small>
+      </div>
+    </a>
     <div class="navright">
-      <button id="install" class="install hidden">⬇ Install</button>
+      <button id="install" class="install hidden">⬇ Install App</button>
       <label class="autolabel">
         <input type="checkbox" id="autoToggle">
         <span class="slider"></span>
@@ -83,6 +94,21 @@
     <h1>Save any video.<br><i>In seconds.</i></h1>
     <p>Download Instagram Reels, Facebook videos, and Twitter clips for free. No signup. No watermark.</p>
 
+    <!-- Queue Status -->
+    <div id="queueStatus" class="queue-status hide">
+      <div class="queue-dot"></div>
+      <span id="queueText">Server processing…</span>
+    </div>
+
+    <!-- Background Download Status -->
+    <div id="bgStatus" class="bg-status hide">
+      <div class="bg-icon">⬇</div>
+      <div class="bg-content">
+        <strong>Background Download</strong>
+        <span id="bgStatusText">Processing…</span>
+      </div>
+    </div>
+
     <div id="drop" class="box">
       <div class="droptext">🔗 Drop or paste a video link here</div>
       <div class="input">
@@ -90,17 +116,15 @@
         <input
           id="url"
           placeholder="Paste Instagram, Facebook, Twitter link…"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="off"
-          spellcheck="false"
+          autocomplete="off" autocorrect="off"
+          autocapitalize="off" spellcheck="false"
         >
         <button id="paste" type="button">Paste</button>
       </div>
       <button id="go" class="go" type="button">
         Get media <strong>→</strong>
       </button>
-      <div class="hint">✓ Free • No Signup • No Watermark</div>
+      <div class="hint">✓ Free • No Signup • No Watermark • Background Download</div>
     </div>
 
     <div id="status" class="status hide"></div>
@@ -129,7 +153,7 @@
       </p>
     </section>
 
-    <div class="ad-wrap hide" id="adAfterDl">
+    <div class="ad-wrap hide" id="adAfterDl" data-ad>
       <span class="ad-label">Advertisement</span>
       <div class="ad-slot"></div>
     </div>
@@ -143,27 +167,27 @@
     </section>
 
     <section class="howto">
-      <h2>How to Download Instagram Videos Free?</h2>
+      <h2>How to Download Videos in Background?</h2>
       <div class="steps">
         <div class="step">
           <div class="step-num">1</div>
           <div class="step-text">
-            <strong>Copy the link</strong>
-            <span>Open Instagram, Facebook, or Twitter. Tap Share → Copy Link</span>
+            <strong>Share from any app</strong>
+            <span>Instagram, Facebook, Twitter pe Share button tap karo → QuickSave select karo</span>
           </div>
         </div>
         <div class="step">
           <div class="step-num">2</div>
           <div class="step-text">
-            <strong>Paste here</strong>
-            <span>Tap "Paste" button above or use Auto-paste feature</span>
+            <strong>Auto background processing</strong>
+            <span>QuickSave background mein process karta hai — aap wapas Instagram ja sakte hain!</span>
           </div>
         </div>
         <div class="step">
           <div class="step-num">3</div>
           <div class="step-text">
-            <strong>Download free</strong>
-            <span>Click "Download Video Free" — saved instantly</span>
+            <strong>Notification aayegi</strong>
+            <span>Jab download ready ho, notification milegi. Tap karke save karo!</span>
           </div>
         </div>
       </div>
@@ -194,22 +218,32 @@
         <p>Yes! QuickSave is 100% free. No hidden charges, no subscription, no signup required.</p>
       </details>
       <details>
+        <summary>Background download kaise kaam karta hai?</summary>
+        <p>Instagram/Facebook mein Share button tap karo, QuickSave select karo. App background mein process karega aur notification dega jab ready ho. Aap wapas Instagram use kar sakte hain!</p>
+      </details>
+      <details>
         <summary>Can I download Instagram Reels without watermark?</summary>
         <p>Yes! All videos are watermark-free in original quality.</p>
       </details>
       <details>
-        <summary>How to download Facebook videos?</summary>
-        <p>Copy the Facebook video URL, paste it above, and click "Get media". Done!</p>
-      </details>
-      <details>
         <summary>Does it work on iPhone and Android?</summary>
-        <p>Yes! Works on all devices — iPhone, Android, and desktop browsers.</p>
+        <p>Yes! Works on all devices. Install the PWA for best experience with background downloads.</p>
       </details>
       <details>
         <summary>Are my downloads private?</summary>
         <p>Yes. We don't store any URLs or videos. Everything is deleted immediately.</p>
       </details>
     </section>
+
+    <!-- Ad Code -->
+    <div class="ad-code-section">
+      <h3>🔑 Have a special code?</h3>
+      <div class="code-input-row">
+        <input type="password" id="adCodeInput" placeholder="Enter code" maxlength="6" autocomplete="off">
+        <button id="adCodeBtn" type="button">Apply</button>
+      </div>
+      <div id="adCodeMsg" class="code-msg"></div>
+    </div>
 
     <div class="notice">
       <b>⚠ Use responsibly.</b> Only download media you own or have permission to save.
