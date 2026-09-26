@@ -1,5 +1,5 @@
-/* QuickSave app.js v6.0 — Instagram, Facebook, Twitter only */
-console.log("QuickSave app.js v6.0 loaded");
+/* QuickSave app.js v6.1 — With Monetag Ads */
+console.log("QuickSave v6.1 loaded");
 
 const $ = id => document.getElementById(id);
 
@@ -23,13 +23,16 @@ const url          = $("url"),
       iosInstall   = $("iosInstall"),
       iosDismiss   = $("iosDismiss"),
       autoToggle   = $("autoToggle"),
-      autoLabel    = $("autoLabel");
+      autoLabel    = $("autoLabel"),
+      retryBtn     = $("retryBtn"),
+      adAfterDl    = $("adAfterDl");
 
 let current        = null;
 let installPrompt  = null;
 let autoProcessing = false;
+let lastUrl        = "";
 
-/* ── Supported Platforms - Sirf 3 ── */
+/* ── Supported Platforms ── */
 const SUPPORTED = [
   "instagram.com",
   "facebook.com", "fb.watch",
@@ -71,7 +74,7 @@ function msg(t, c = "") {
 }
 
 function size(n) {
-  if (!n) return "Size unknown";
+  if (!n) return "";
   const u = ["B","KB","MB","GB"];
   let i = 0;
   while (n >= 1024 && i < 3) { n /= 1024; i++; }
@@ -87,6 +90,20 @@ function escapeHtml(s) {
 function buildDlUrl(d) {
   if (!d?.id) return "#";
   return `/api/download?id=${encodeURIComponent(d.id)}`;
+}
+
+/* ── Monetag Interstitial Ad ── */
+function showMoneyAd() {
+  try {
+    // Monetag interstitial trigger
+    if (typeof window.monetagShowAd === "function") {
+      window.monetagShowAd();
+    }
+    // Ya direct show karo
+    if (typeof show_8916606 === "function") {
+      show_8916606(); // apna function name daalo
+    }
+  } catch {}
 }
 
 /* ── History ── */
@@ -108,7 +125,7 @@ function renderHistory() {
         <b>${escapeHtml(x.name || "media")}</b>
         <small>${escapeHtml(x.type || "media")} • ${new Date(x.time).toLocaleString()}</small>
       </div>
-      <a href="${href}" download="${escapeHtml(x.name || "media")}">Download</a>
+      <a href="${href}" download="${escapeHtml(x.name || "media")}">↓ Save</a>
     </div>`;
   }).join("");
 }
@@ -132,21 +149,22 @@ async function tryAutoPaste() {
 async function processUrl(value, autoDownload = false) {
   if (!value || autoProcessing) return;
 
-  // Platform check client-side
   if (!isSupportedUrl(value)) {
     msg("Only Instagram, Facebook, and Twitter/X links are supported.", "err");
     return;
   }
 
   autoProcessing = true;
+  lastUrl        = value;
   url.value      = value;
   go.disabled    = true;
   result.classList.add("hide");
   progress.classList.add("hide");
+  if (adAfterDl) adAfterDl.classList.add("hide");
 
   const btnText = [...go.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
   if (btnText) btnText.textContent = "Checking… ";
-  msg("Fetching media info…");
+  msg("⏳ Fetching media info…");
 
   try {
     const r = await fetch("/api/inspect", {
@@ -162,20 +180,26 @@ async function processUrl(value, autoDownload = false) {
     current = d;
 
     name.textContent = d.filename || "media.mp4";
-    meta.textContent = (d.contentType || "media") + (d.size ? " • " + size(d.size) : "");
+    meta.textContent = (d.contentType || "media").replace("video/","").toUpperCase() +
+                       (d.size ? " • " + size(d.size) : "");
     showPreview(d);
 
     download.href = buildDlUrl(d);
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
 
     result.classList.remove("hide");
-    msg("✓ Media ready! Tap Download to save.", "ok");
+    msg("✅ Ready! Tap the button below to download.", "ok");
 
-    if (autoDownload && isAutoEnabled()) triggerDownload(d);
+    // Monetag interstitial show on result
+    showMoneyAd();
+
+    if (autoDownload && isAutoEnabled()) {
+      setTimeout(() => triggerDownload(d), 800);
+    }
 
   } catch (e) {
     console.error("Process failed:", e);
-    msg(e.message || "Something went wrong.", "err");
+    msg("❌ " + (e.message || "Something went wrong."), "err");
   } finally {
     go.disabled    = false;
     autoProcessing = false;
@@ -200,12 +224,15 @@ function triggerDownload(d) {
   bar.style.width          = "10%";
   progressPct.textContent  = "10%";
 
+  // Show after-download ad
+  if (adAfterDl) adAfterDl.classList.remove("hide");
+
   if (isIOS()) {
     window.location.href = dlUrl;
   } else {
-    const a = document.createElement("a");
-    a.href     = dlUrl;
-    a.download = d.filename || "QuickSave_Media.mp4";
+    const a        = document.createElement("a");
+    a.href         = dlUrl;
+    a.download     = d.filename || "QuickSave_Media.mp4";
     a.style.display = "none";
     document.body.appendChild(a);
     a.click();
@@ -213,33 +240,34 @@ function triggerDownload(d) {
   }
 
   setTimeout(() => {
-    bar.style.width         = "100%";
-    progressPct.textContent = "Ready";
+    bar.style.width          = "100%";
+    progressPct.textContent  = "100%";
     progressText.textContent = isIOS()
-      ? "Download started — tap & hold to save."
-      : "Download started — check your Downloads folder.";
-  }, 600);
+      ? "✅ Tap & hold the video to save to Photos."
+      : "✅ Download started — check your Downloads folder.";
+  }, 800);
 }
 
 /* ── Preview ── */
 function showPreview(d) {
-  thumb.innerHTML     = "";
-  thumb.style.cursor  = "pointer";
-  thumb.onclick = () => {
+  thumb.innerHTML    = "";
+  thumb.style.cursor = "pointer";
+  thumb.title        = "Click to preview";
+  thumb.onclick      = () => {
     window.open(`/api/download?id=${d.id}&inline=1`, "_blank");
   };
 
   if (d.thumbnail) {
-    const img       = new Image();
-    img.src         = d.thumbnail;
-    img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
-    img.onload  = () => thumb.appendChild(img);
-    img.onerror = () => (thumb.innerHTML = "<span>▶</span>");
+    const img         = new Image();
+    img.src           = d.thumbnail;
+    img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;border-radius:12px;";
+    img.onload        = () => thumb.appendChild(img);
+    img.onerror       = () => (thumb.innerHTML = "<span>▶</span>");
   } else {
-    const mime = (d.contentType || "").toLowerCase();
-    thumb.innerHTML = mime.startsWith("image/") ? "<span>◈</span>"
-      : mime.startsWith("video/")               ? "<span>▶</span>"
-      :                                            "<span>♪</span>";
+    const mime        = (d.contentType || "").toLowerCase();
+    thumb.innerHTML   = mime.startsWith("image/") ? "<span>◈</span>"
+      : mime.startsWith("video/")                 ? "<span>▶</span>"
+      :                                              "<span>♪</span>";
   }
 }
 
@@ -249,9 +277,11 @@ paste.onclick = async () => {
     const text = (await navigator.clipboard.readText()).trim();
     if (text) {
       url.value         = text;
-      paste.textContent = "Pasted ✓";
-      setTimeout(() => (paste.textContent = "Paste"), 1200);
+      paste.textContent = "✓ Pasted";
+      setTimeout(() => (paste.textContent = "Paste"), 1500);
       if (isAutoEnabled() && isSupportedUrl(text)) processUrl(text, true);
+    } else {
+      msg("Clipboard is empty. Copy a link first.", "err");
     }
   } catch {
     msg("Clipboard unavailable. Please paste manually.", "err");
@@ -262,7 +292,7 @@ paste.onclick = async () => {
 /* ── Get Media Button ── */
 go.onclick = () => {
   const value = url.value.trim();
-  if (!value) return msg("Paste a media URL first.", "err");
+  if (!value) return msg("Please paste a media URL first.", "err");
   processUrl(value, false);
 };
 
@@ -291,14 +321,18 @@ download.addEventListener("click", e => {
   bar.style.width          = "10%";
   progressPct.textContent  = "10%";
 
+  // Show ad on download
+  if (adAfterDl) adAfterDl.classList.remove("hide");
+  showMoneyAd();
+
   if (isIOS()) {
     e.preventDefault();
     window.location.href = dlUrl;
     setTimeout(() => {
-      bar.style.width         = "100%";
-      progressPct.textContent = "Ready";
-      progressText.textContent = "Download started — tap & hold video to save.";
-    }, 600);
+      bar.style.width          = "100%";
+      progressPct.textContent  = "100%";
+      progressText.textContent = "✅ Tap & hold video to save to Photos.";
+    }, 800);
     return;
   }
 
@@ -306,18 +340,32 @@ download.addEventListener("click", e => {
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
 
   setTimeout(() => {
-    bar.style.width         = "100%";
-    progressPct.textContent = "Ready";
-    progressText.textContent = "Download started — check your Downloads folder.";
-  }, 600);
+    bar.style.width          = "100%";
+    progressPct.textContent  = "100%";
+    progressText.textContent = "✅ Check your Downloads folder.";
+  }, 800);
 });
+
+/* ── Retry Button ── */
+if (retryBtn) {
+  retryBtn.onclick = e => {
+    e.preventDefault();
+    if (lastUrl) processUrl(lastUrl, false);
+  };
+}
 
 /* ── Drag & Drop ── */
 ["dragenter","dragover"].forEach(ev =>
-  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.add("drag"); })
+  drop.addEventListener(ev, x => {
+    x.preventDefault();
+    drop.classList.add("drag");
+  })
 );
 ["dragleave","drop"].forEach(ev =>
-  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.remove("drag"); })
+  drop.addEventListener(ev, x => {
+    x.preventDefault();
+    drop.classList.remove("drag");
+  })
 );
 drop.addEventListener("drop", e => {
   const text = e.dataTransfer.getData("text/plain") ||
@@ -359,13 +407,17 @@ async function onStartup() {
   setAuto(isAutoEnabled());
 
   // iOS banner
-  if (isIOS() && !isInStandaloneMode() && !localStorage.getItem("qs_ios_dismissed")) {
-    setTimeout(() => iosInstall?.classList.remove("hidden"), 2500);
+  if (isIOS() && !isInStandaloneMode() &&
+      !localStorage.getItem("qs_ios_dismissed")) {
+    setTimeout(() => iosInstall?.classList.remove("hidden"), 3000);
   }
 
-  // Shared URL (from Share menu)
+  // Shared URL
   const params    = new URLSearchParams(window.location.search);
-  const sharedUrl = (params.get("url") || params.get("text") || params.get("title") || "").trim();
+  const sharedUrl = (
+    params.get("url") || params.get("text") || params.get("title") || ""
+  ).trim();
+
   if (sharedUrl && isSupportedUrl(sharedUrl)) {
     window.history.replaceState({}, "", "/");
     await processUrl(sharedUrl, true);
@@ -376,7 +428,7 @@ async function onStartup() {
   if (isAutoEnabled()) {
     const autoPasted = await tryAutoPaste();
     if (autoPasted) {
-      msg("URL detected! Processing…", "ok");
+      msg("🔗 URL detected! Processing…", "ok");
       await processUrl(autoPasted, true);
       return;
     }
@@ -385,7 +437,7 @@ async function onStartup() {
   renderHistory();
 }
 
-/* ── Visibility change (app focus) ── */
+/* ── Visibility Change ── */
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible") return;
   if (autoProcessing) return;
@@ -395,7 +447,7 @@ document.addEventListener("visibilitychange", async () => {
 
   const autoPasted = await tryAutoPaste();
   if (autoPasted && autoPasted !== url.value.trim()) {
-    msg("New URL detected! Processing…", "ok");
+    msg("🔗 New URL detected! Processing…", "ok");
     await processUrl(autoPasted, true);
   }
 });
