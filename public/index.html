@@ -1,41 +1,93 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080b16"><meta name="description" content="QuickSave authorized media saver">
-<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg">
-<title>QuickSave — Media Saver</title><link rel="stylesheet" href="/styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080b16">
+  <meta name="description" content="QuickSave — Save videos from Instagram, YouTube, TikTok, Facebook">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg">
+  <title>QuickSave — Media Saver</title>
+  <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<div class="orb o1"></div><div class="orb o2"></div>
+<div class="orb o1"></div>
+<div class="orb o2"></div>
 <main>
-<nav><a class="brand" href="/"><b>↧</b>Quick<span>Save</span></a><div class="navright"><button id="install" class="install hidden">Install app</button><span>NO LOGIN</span></div></nav>
-<section class="hero">
-<div class="tag">● FAST • SIMPLE • PRIVATE</div>
-<h1>Save your media.<br><i>In a few taps.</i></h1>
-<p>Paste a direct/public media link, preview it and prepare your authorized media for download.</p>
-<div id="drop" class="box">
-<div class="droptext">Drop a media URL here</div>
-<div class="input"><span>⌁</span><input id="url" placeholder="Paste a direct media URL…" autocomplete="off"><button id="paste">Paste</button></div>
-<button id="go" class="go">Get media <strong>→</strong></button>
-<div class="hint">✓ No account • 250 MB max • Streamed, not permanently stored</div>
-</div>
-<div id="status" class="status hide"></div>
-<section id="result" class="result hide">
-<div class="preview"><div class="thumb" id="thumb"><span>▶</span></div><div class="fileinfo"><small>READY TO SAVE</small><b id="name">media.mp4</b><em id="meta">Video</em></div></div>
-<div class="progress hide" id="progress"><div><span id="progressText">Preparing…</span><span id="progressPct">0%</span></div><i><b id="bar"></b></i></div>
-<a id="download" class="download">Download file <strong>↓</strong></a>
-</section>
-<section id="historyPanel" class="history hide"><div class="sectionhead"><h2>Recent downloads</h2><button id="clearHistory">Clear</button></div><div id="history"></div></section>
-<div class="adslot"><span>ADVERTISEMENT</span><div>Monetization-ready placement</div></div>
-<div class="features">
-<article><b>⚡</b><strong>Quick</strong><span>Paste, preview and save in a few taps.</span></article>
-<article><b>◈</b><strong>Installable</strong><span>Works as a mobile PWA when installed.</span></article>
-<article><b>⌁</b><strong>Protected</strong><span>Rate limits, size controls and safe redirects.</span></article>
-</div>
-<div class="notice"><b>Use responsibly.</b> Only download media you own, created, or have permission to save. This app does not bypass private content, DRM, authentication or platform protections.</div>
-</section>
-<footer><span>© 2026 QuickSave</span><span>Authorized media only</span></footer>
+  <nav>
+    <a class="brand" href="/"><b>↧</b>Quick<span>Save</span></a>
+    <div class="navright">
+      <button id="install" class="install hidden">Install app</button>
+      <!-- Auto Toggle -->
+      <label class="autolabel">
+        <input type="checkbox" id="autoToggle">
+        <span class="slider"></span>
+      </label>
+      <span id="autoLabel" class="autotxt">Auto ON</span>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="tag">● INSTAGRAM • YOUTUBE • TIKTOK • FACEBOOK</div>
+    <h1>Save your media.<br><i>In a few taps.</i></h1>
+    <p>Paste a link or share directly from any app. Auto-paste detects your clipboard automatically.</p>
+
+    <div id="drop" class="box">
+      <div class="droptext">Drop a media URL here</div>
+      <div class="input">
+        <span>⌁</span>
+        <input id="url" placeholder="Paste Instagram, YouTube, TikTok link…" autocomplete="off">
+        <button id="paste" type="button">Paste</button>
+      </div>
+      <button id="go" class="go" type="button">Get media <strong>→</strong></button>
+      <div class="hint">✓ Instagram • YouTube • TikTok • Facebook • Twitter</div>
+    </div>
+
+    <div id="status" class="status hide"></div>
+
+    <section id="result" class="result hide">
+      <div class="preview">
+        <div class="thumb" id="thumb"><span>▶</span></div>
+        <div class="fileinfo">
+          <small>READY TO SAVE</small>
+          <b id="name">media.mp4</b>
+          <em id="meta">Video</em>
+        </div>
+      </div>
+      <div class="progress hide" id="progress">
+        <div>
+          <span id="progressText">Preparing…</span>
+          <span id="progressPct">0%</span>
+        </div>
+        <i><b id="bar"></b></i>
+      </div>
+      <a id="download" class="download" href="#">Download file <strong>↓</strong></a>
+    </section>
+
+    <section id="historyPanel" class="history hide">
+      <div class="sectionhead">
+        <h2>Recent downloads</h2>
+        <button id="clearHistory" type="button">Clear</button>
+      </div>
+      <div id="history"></div>
+    </section>
+
+    <div class="features">
+      <article><b>⚡</b><strong>Auto-Paste</strong><span>Opens app → detects link → downloads.</span></article>
+      <article><b>◈</b><strong>All Platforms</strong><span>Instagram, YouTube, TikTok, Facebook.</span></article>
+      <article><b>⌁</b><strong>Share Target</strong><span>Share from any app directly to QuickSave.</span></article>
+    </div>
+
+    <div class="notice">
+      <b>Use responsibly.</b> Only download media you own or have permission to save.
+    </div>
+  </section>
+
+  <footer>
+    <span>© 2026 QuickSave</span>
+    <span>Authorized media only</span>
+  </footer>
 </main>
 <script src="/app.js"></script>
-</body></html>
+</body>
+</html>
