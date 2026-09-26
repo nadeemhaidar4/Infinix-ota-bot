@@ -1,5 +1,5 @@
-/* QuickSave app.js v4.2 */
-console.log("QuickSave app.js v4.2 loaded");
+/* QuickSave app.js v4.3 */
+console.log("QuickSave app.js v4.3 loaded");
 
 const $ = id => document.getElementById(id);
 const url       = $("url"),
@@ -199,21 +199,25 @@ function triggerDownload(d) {
   }, 500);
 }
 
-/* ── Preview (Strictly Small Box Fix) ── */
+/* ── Preview (Thumbnail Click to Play Logic) ── */
 function showPreview(d) {
   thumb.innerHTML = "";
-  // Is line se image dabbe ke bahar nahi niklegi
-  thumb.style.overflow = "hidden"; 
+  thumb.style.overflow = "hidden";
+  thumb.style.cursor = "pointer"; // Mouse cursor pointer ban jayega taaki lage ki click kar sakte hain
+
+  // Agar user thumbnail box par click karega toh video play hone ke liye naye tab me khulegi
+  thumb.onclick = () => {
+    const playUrl = d.directUrl || `/api/download?id=${d.id}`;
+    window.open(playUrl, '_blank');
+  };
   
   if (d.thumbnail) {
     const img = new Image();
     img.src = d.thumbnail;
     
-    // Yahan sirf 56x56 px ki size lock kar di hai
-    img.style.width = "56px";
-    img.style.height = "56px";
-    img.style.maxWidth = "56px";
-    img.style.maxHeight = "56px";
+    // Size ko CSS wali thumb class (56x56) tak hi restrict rakhega
+    img.style.width = "100%";
+    img.style.height = "100%";
     img.style.objectFit = "cover";
     img.style.display = "block";
     
