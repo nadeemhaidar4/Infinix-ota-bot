@@ -1,17 +1,15 @@
 {
   "name": "quicksave-ultimate",
-  "version": "2.0.0",
-  "private": true,
-  "description": "Login-free authorized media saver with PWA UI, previews, history and monetization-ready slots.",
-  "main": "server.js",
+  "version": "3.1.0",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --max-old-space-size=450 server.js",
+    "build": "npx yt-dlp --update-to stable || true"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "express": "^5.1.0",
-    "youtube-dl-exec": "^3.0.2"
+    "youtube-dl-exec": "^3.0.12"
   }
 }
