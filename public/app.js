@@ -1,7 +1,7 @@
-/* QuickSave app.js v8.1 - Background Download */
-console.log("QuickSave v8.1 loaded");
+/* QuickSave app.js v8.2 - Full Auto Background Download */
+console.log("QuickSave v8.2 loaded");
 
-const APP_VERSION    = "8.1.0";
+const APP_VERSION    = "8.2.0";
 const AD_DISABLE_CODE = "666666";
 
 const $ = id => document.getElementById(id);
@@ -39,7 +39,8 @@ const url            = $("url"),
       adCodeBtn      = $("adCodeBtn"),
       adCodeMsg      = $("adCodeMsg"),
       bgStatus       = $("bgStatus"),
-      bgStatusText   = $("bgStatusText");
+      bgStatusText   = $("bgStatusText"),
+      bgStatusIcon   = $("bgStatusIcon");
 
 let current        = null;
 let installPrompt  = null;
@@ -58,6 +59,13 @@ function isPWA() {
     document.referrer.includes("android-app://")
   );
 }
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+function isInStandaloneMode() {
+  return window.matchMedia("(display-mode: standalone)").matches ||
+         window.navigator.standalone === true;
+}
 
 /* ════════════════════════════════════════
    SUPPORTED PLATFORMS
@@ -68,20 +76,6 @@ function isSupportedUrl(u) {
     const h = new URL(u).hostname.replace(/^www\./, "");
     return SUPPORTED.some(p => h.includes(p));
   } catch { return false; }
-}
-
-/* ════════════════════════════════════════
-   IOS
-════════════════════════════════════════ */
-function isIOS() {
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-}
-function isAndroid() {
-  return /Android/.test(navigator.userAgent);
-}
-function isInStandaloneMode() {
-  return window.matchMedia("(display-mode: standalone)").matches ||
-         window.navigator.standalone === true;
 }
 
 /* ════════════════════════════════════════
@@ -96,14 +90,13 @@ function setAdsDisabled(val) {
 }
 function applyAdVisibility() {
   const disabled = isAdsDisabled();
-  document.querySelectorAll(".ad-wrap, .interstitial-overlay, [data-ad]").forEach(el => {
+  document.querySelectorAll(".ad-wrap,.interstitial-overlay,[data-ad]").forEach(el => {
     el.classList.toggle("ads-hidden", disabled);
   });
   if (adCodeMsg) {
     adCodeMsg.textContent = disabled ? "✅ Ads are disabled" : "";
     adCodeMsg.className   = disabled ? "code-msg ok" : "code-msg";
   }
-  if (adCodeInput) adCodeInput.value = "";
 }
 
 if (adCodeBtn) {
@@ -162,12 +155,13 @@ function buildDlUrl(d) {
 }
 
 /* ════════════════════════════════════════
-   BACKGROUND STATUS UI
+   BG STATUS UI
 ════════════════════════════════════════ */
-function showBgStatus(text, type = "") {
-  if (!bgStatus || !bgStatusText) return;
-  bgStatusText.textContent = text;
-  bgStatus.className = `bg-status${type ? " " + type : ""}`;
+function showBgStatus(text, type = "processing", icon = "⬇") {
+  if (!bgStatus) return;
+  if (bgStatusText) bgStatusText.textContent = text;
+  if (bgStatusIcon) bgStatusIcon.textContent = icon;
+  bgStatus.className = `bg-status ${type}`;
   bgStatus.classList.remove("hide");
 }
 function hideBgStatus() {
@@ -175,7 +169,7 @@ function hideBgStatus() {
 }
 
 /* ════════════════════════════════════════
-   QUEUE STATUS UI
+   QUEUE STATUS
 ════════════════════════════════════════ */
 async function updateQueueStatus() {
   try {
@@ -196,96 +190,183 @@ async function updateQueueStatus() {
 /* ════════════════════════════════════════
    NOTIFICATION PERMISSION
 ════════════════════════════════════════ */
-async function requestNotificationPermission() {
+async function requestNotifPermission() {
   if (!("Notification" in window)) return false;
   if (Notification.permission === "granted") return true;
-  if (Notification.permission === "denied") return false;
-  const result = await Notification.requestPermission();
-  return result === "granted";
+  if (Notification.permission === "denied")  return false;
+  const r = await Notification.requestPermission();
+  return r === "granted";
 }
 
 /* ════════════════════════════════════════
-   BACKGROUND DOWNLOAD - SW ke through
+   AUTO DOWNLOAD FROM BG CACHE
+   SW ne cache mein store ki file ko
+   automatically download karo
 ════════════════════════════════════════ */
-async function backgroundDownload(pageUrl) {
-  if (!swRegistration) {
-    console.log("[BG] No SW, using normal download");
-    return false;
-  }
+async function autoDownloadFromCache(cacheKey, filename) {
+  console.log("[auto-dl] Fetching from cache:", cacheKey);
 
-  const sw = swRegistration.active;
-  if (!sw) return false;
+  showBgStatus("⬇ Saving to your device…", "downloading", "⬇");
 
-  // Notification permission check
-  const hasNotif = await requestNotificationPermission();
-  if (!hasNotif) {
-    console.log("[BG] No notification permission");
-    return false;
-  }
+  try {
+    // SW cache se file fetch karo
+    const response = await fetch(cacheKey);
 
-  const dlId = Date.now().toString();
-
-  // SW ko background download ke liye bhejo
-  sw.postMessage({
-    type: "BG_DOWNLOAD",
-    data: { url: pageUrl, id: dlId }
-  });
-
-  showBgStatus("⏳ Processing in background... You can go back to your app!", "processing");
-
-  // 3 second baad current app se wapas navigate karo
-  setTimeout(() => {
-    // Agar user abhi bhi yahan hai to status update karo
-    if (document.visibilityState === "visible") {
-      showBgStatus("⏳ Download processing... Notification aayegi jab ready ho.", "processing");
+    if (!response.ok) {
+      throw new Error(`Cache fetch failed: ${response.status}`);
     }
-  }, 500);
 
-  return true;
+    const blob = await response.blob();
+    const safeFilename = filename || "QuickSave_video.mp4";
+
+    // Blob URL banao aur auto click karo
+    const blobUrl = URL.createObjectURL(blob);
+    const a       = document.createElement("a");
+    a.href        = blobUrl;
+    a.download    = safeFilename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+
+    // Cleanup
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    }, 2000);
+
+    showBgStatus(`✅ Saved! Check your Downloads folder.`, "ok", "✅");
+    msg("✅ Video saved to Downloads!", "ok");
+
+    // History mein add karo
+    saveHistory({
+      id:   cacheKey,
+      name: safeFilename,
+      type: "video/mp4",
+      time: Date.now()
+    });
+
+    setTimeout(() => hideBgStatus(), 6000);
+
+    console.log("[auto-dl] ✓ Downloaded:", safeFilename);
+
+  } catch(e) {
+    console.error("[auto-dl] Failed:", e.message);
+    showBgStatus(`❌ Save failed: ${e.message}`, "err", "❌");
+    setTimeout(() => hideBgStatus(), 5000);
+  }
 }
 
 /* ════════════════════════════════════════
    SW MESSAGE LISTENER
 ════════════════════════════════════════ */
-function setupSWMessageListener() {
+function setupSWMessages() {
+  if (!("serviceWorker" in navigator)) return;
+
   navigator.serviceWorker.addEventListener("message", async event => {
-    const { type, id, dlId, mediaId, filename, thumb: thumbnail, error, status: dlStatus } = event.data || {};
+    const data = event.data || {};
+    console.log("[SW msg]", data.type, data.status || "");
 
-    console.log("[SW msg]", type, dlStatus);
+    /* Background download status updates */
+    if (data.type === "BG_STATUS") {
+      switch(data.status) {
+        case "processing":
+          showBgStatus("⏳ Processing video… You can go back!", "processing", "⏳");
+          break;
+        case "downloading":
+          showBgStatus("⬇ Downloading in background…", "downloading", "⬇");
+          break;
+        case "done":
+          // Auto download karo cache se
+          if (data.cacheKey) {
+            await autoDownloadFromCache(data.cacheKey, data.filename);
+          }
+          break;
+        case "error":
+          showBgStatus(`❌ ${data.msg || "Download failed"}`, "err", "❌");
+          setTimeout(() => hideBgStatus(), 6000);
+          break;
+      }
+      return;
+    }
 
-    switch (type) {
-      case "BG_DOWNLOAD_START":
-        showBgStatus("⏳ Processing your video in background...", "processing");
-        break;
+    /* Notification click se aaya - app already open thi */
+    if (data.type === "OPEN_BG_DOWNLOAD") {
+      const urlParams = new URLSearchParams(new URL(data.url, window.location.origin).search);
+      const ck = urlParams.get("ck");
+      const fn = urlParams.get("fn");
+      if (ck) {
+        await autoDownloadFromCache(decodeURIComponent(ck), decodeURIComponent(fn || "video.mp4"));
+      }
+      return;
+    }
 
-      case "BG_DOWNLOAD_READY":
-        showBgStatus("✅ Ready! Tap notification to download.", "ok");
-        // History mein save karo
-        if (mediaId || dlId) {
-          saveHistory({
-            id:   mediaId || dlId,
-            name: filename || "video.mp4",
-            type: "video/mp4",
-            time: Date.now()
-          });
-        }
-        setTimeout(() => hideBgStatus(), 5000);
-        break;
-
-      case "BG_DOWNLOAD_ERROR":
-        showBgStatus(`❌ ${error || "Download failed"}`, "err");
-        setTimeout(() => hideBgStatus(), 5000);
-        break;
-
-      case "TRIGGER_DOWNLOAD":
-        // Notification click se aaya - seedha download shuru karo
-        if (mediaId) {
-          const fakeData = { id: mediaId, filename: filename || "video.mp4" };
-          startDownload(fakeData);
-        }
-        break;
+    /* Direct trigger (fallback) */
+    if (data.type === "TRIGGER_DOWNLOAD") {
+      if (data.cacheKey) {
+        await autoDownloadFromCache(data.cacheKey, data.filename);
+      } else if (data.mediaId) {
+        startDownload({ id: data.mediaId, filename: data.filename });
+      }
+      return;
     }
   });
+}
+
+/* ════════════════════════════════════════
+   BACKGROUND DOWNLOAD TRIGGER
+════════════════════════════════════════ */
+async function startBackgroundDownload(pageUrl) {
+  if (!swRegistration?.active) {
+    console.log("[BG] No SW active");
+    return false;
+  }
+
+  // Notification permission
+  const hasNotif = await requestNotifPermission();
+  if (!hasNotif) {
+    console.log("[BG] No notification permission, using normal flow");
+    return false;
+  }
+
+  const dlId = Date.now().toString();
+
+  // SW ko message bhejo
+  swRegistration.active.postMessage({
+    type: "BG_DOWNLOAD",
+    data: { url: pageUrl, id: dlId }
+  });
+
+  showBgStatus("⏳ Processing in background… Aap wapas ja sakte hain!", "processing", "⏳");
+  msg("⏳ Background mein ho raha hai! Notification aayegi.", "ok");
+
+  return true;
+}
+
+/* ════════════════════════════════════════
+   SHARE TARGET HANDLER
+════════════════════════════════════════ */
+async function handleShareTarget(sharedUrl) {
+  console.log("[share] URL:", sharedUrl);
+
+  if (!isSupportedUrl(sharedUrl)) {
+    msg("Only Instagram, Facebook, Twitter/X links supported.", "err");
+    return;
+  }
+
+  url.value = sharedUrl;
+
+  // PWA mein hai? Background download try karo
+  if (isPWA() && swRegistration?.active) {
+    const started = await startBackgroundDownload(sharedUrl);
+    if (started) {
+      // Background download start hua - normal flow skip karo
+      // User wapas ja sakta hai
+      return;
+    }
+  }
+
+  // Fallback: Normal download
+  await processUrl(sharedUrl, true);
 }
 
 /* ════════════════════════════════════════
@@ -307,7 +388,7 @@ function showInterstitialAd(callback) {
     interstitialAd.classList.add("hide");
     document.body.style.overflow = "";
   }
-  if (closeBtn) { closeBtn.onclick = () => { closeAd(); callback?.(); }; }
+  if (closeBtn) closeBtn.onclick = () => { closeAd(); callback?.(); };
   interstitialAd.onclick = e => { if (e.target === interstitialAd) { closeAd(); callback?.(); } };
 }
 
@@ -359,7 +440,10 @@ function renderHistory() {
   if (!h.length) { historyPanel.classList.add("hide"); return; }
   historyPanel.classList.remove("hide");
   historyEl.innerHTML = h.map(x => {
-    const href = x.id ? escHtml(`/api/download?id=${x.id}`) : "#";
+    const isCacheKey = x.id && x.id.startsWith("/bg-download/");
+    const href = isCacheKey
+      ? escHtml(x.id)
+      : (x.id ? escHtml(`/api/download?id=${x.id}`) : "#");
     return `<div class="historyrow">
       <div>
         <b>${escHtml(x.name || "media")}</b>
@@ -387,7 +471,7 @@ async function tryAutoPaste() {
 }
 
 /* ════════════════════════════════════════
-   MAIN PROCESS
+   MAIN PROCESS (Normal flow)
 ════════════════════════════════════════ */
 async function processUrl(value, autoDownload = false) {
   if (!value || autoProcessing) return;
@@ -406,18 +490,15 @@ async function processUrl(value, autoDownload = false) {
 
   const btnText = [...go.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
   if (btnText) btnText.textContent = "Checking… ";
-
   updateQueueStatus();
 
   try {
     const qr = await fetch("/api/queue");
     const qd = await qr.json();
-
-    if (!qd.available && qd.waiting > 3) {
-      msg(`⏳ Server busy — queued at position ${qd.waiting + 1}…`);
-    } else {
-      msg("⏳ Fetching media info…");
-    }
+    msg(!qd.available && qd.waiting > 2
+      ? `⏳ Queue mein hai (position ${qd.waiting + 1})…`
+      : "⏳ Fetching media info…"
+    );
 
     const r = await fetch("/api/inspect", {
       method:  "POST",
@@ -425,15 +506,14 @@ async function processUrl(value, autoDownload = false) {
       body:    JSON.stringify({ url: value })
     });
     const d = await r.json();
-
     updateQueueStatus();
 
     if (r.status === 503 && d.type === "queue-full")
-      throw new Error(`🔴 Server busy (${d.queueSize} waiting). Try again in 30s.`);
+      throw new Error(`🔴 Server busy. ${d.queueSize} waiting. Try in 30s.`);
     if (r.status === 408)
-      throw new Error("⏱️ Timed out. Please try again.");
+      throw new Error("⏱️ Timeout. Please try again.");
     if (!r.ok || !d.ok) throw new Error(d.message || "Could not process link.");
-    if (!d.id)          throw new Error("Server error: no download ID.");
+    if (!d.id)          throw new Error("Server error.");
 
     current = d;
     name.textContent = d.filename || "media.mp4";
@@ -462,7 +542,7 @@ async function processUrl(value, autoDownload = false) {
 }
 
 /* ════════════════════════════════════════
-   START DOWNLOAD
+   START DOWNLOAD (Normal)
 ════════════════════════════════════════ */
 function startDownload(d) {
   const dlUrl = buildDlUrl(d);
@@ -494,8 +574,8 @@ function startDownload(d) {
   }
 
   setTimeout(() => {
-    bar.style.width         = "100%";
-    progressPct.textContent = "100%";
+    bar.style.width          = "100%";
+    progressPct.textContent  = "100%";
     progressText.textContent = isIOS()
       ? "✅ Tap & hold video to save to Photos."
       : "✅ Check your Downloads folder.";
@@ -512,47 +592,6 @@ function triggerDownload(d) {
   } else {
     startDownload(d);
   }
-}
-
-/* ════════════════════════════════════════
-   SHARE TARGET - Background Download
-   Jab user doosre app se share kare
-════════════════════════════════════════ */
-async function handleShareTarget(sharedUrl) {
-  console.log("[share] Received:", sharedUrl);
-
-  // URL valid hai?
-  if (!isSupportedUrl(sharedUrl)) {
-    msg("Only Instagram, Facebook, Twitter/X links supported.", "err");
-    return;
-  }
-
-  url.value = sharedUrl;
-
-  // PWA mein hai aur SW available hai - background download try karo
-  if (isPWA() && swRegistration?.active) {
-    // Notification permission maango
-    const hasNotif = await requestNotificationPermission();
-
-    if (hasNotif) {
-      // Background download start karo
-      showBgStatus("⏳ Processing in background... Aap wapas ja sakte hain!", "processing");
-      msg("⏳ Background mein process ho raha hai... Notification aayegi!", "ok");
-
-      // Background download SW ko bhejo
-      swRegistration.active.postMessage({
-        type: "BG_DOWNLOAD",
-        data: { url: sharedUrl, id: Date.now().toString() }
-      });
-
-      // 2 second baad page hide ho (user wapas jaa sake)
-      // App minimize hone par background mein chalega
-      return; // Normal processing mat karo
-    }
-  }
-
-  // Fallback: Normal processing
-  await processUrl(sharedUrl, true);
 }
 
 /* ════════════════════════════════════════
@@ -591,7 +630,7 @@ paste.onclick = async () => {
       msg("Clipboard is empty.", "err");
     }
   } catch {
-    msg("Clipboard unavailable. Please paste manually.", "err");
+    msg("Clipboard unavailable. Paste manually.", "err");
     url.focus();
   }
 };
@@ -653,9 +692,7 @@ install.onclick = async () => {
   install.classList.add("hidden");
 };
 
-/* ════════════════════════════════════════
-   IOS BANNER
-════════════════════════════════════════ */
+/* ── iOS Banner ── */
 if (iosDismiss) {
   iosDismiss.onclick = () => {
     iosInstall?.classList.add("hidden");
@@ -664,7 +701,7 @@ if (iosDismiss) {
 }
 
 /* ════════════════════════════════════════
-   SERVICE WORKER REGISTER
+   SERVICE WORKER
 ════════════════════════════════════════ */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
@@ -685,10 +722,10 @@ if ("serviceWorker" in navigator) {
         window.location.reload();
       });
 
-      // SW messages sun
-      setupSWMessageListener();
+      // SW messages setup
+      setupSWMessages();
 
-      // Update check
+      // Auto update check
       setInterval(() => swRegistration.update(), 5 * 60 * 1000);
 
     } catch(e) {
@@ -713,38 +750,45 @@ async function onStartup() {
 
   const params = new URLSearchParams(window.location.search);
 
-  // Download param - notification click se aaya
-  const downloadId = params.get("download");
-  if (downloadId) {
+  /* ── Background download complete - notification tap se aaya ── */
+  const bgDlId = params.get("bg_dl");
+  const ck     = params.get("ck");
+  const fn     = params.get("fn");
+
+  if (bgDlId && ck) {
     window.history.replaceState({}, "", "/");
-    const fakeData = {
-      id:       downloadId,
-      filename: params.get("filename") || "video.mp4"
-    };
-    setTimeout(() => startDownload(fakeData), 500);
+    // Thoda wait karo SW ready hone ke liye
+    setTimeout(async () => {
+      await autoDownloadFromCache(
+        decodeURIComponent(ck),
+        decodeURIComponent(fn || "video.mp4")
+      );
+    }, 800);
     return;
   }
 
-  // Share target URL
+  /* ── Share target ── */
   const sharedUrl = (
     params.get("url") || params.get("text") || params.get("title") || ""
   ).trim();
 
   if (sharedUrl && isSupportedUrl(sharedUrl)) {
     window.history.replaceState({}, "", "/");
+    // SW ready hone ka wait karo
+    await new Promise(r => setTimeout(r, 500));
     await handleShareTarget(sharedUrl);
     return;
   }
 
-  // Action param
+  /* ── Action ── */
   const action = params.get("action");
   if (action === "paste") {
     window.history.replaceState({}, "", "/");
-    paste.onclick?.();
+    setTimeout(() => paste.onclick?.(), 300);
     return;
   }
 
-  // Auto paste
+  /* ── Auto paste ── */
   if (isAutoEnabled()) {
     const autoPasted = await tryAutoPaste();
     if (autoPasted) {
