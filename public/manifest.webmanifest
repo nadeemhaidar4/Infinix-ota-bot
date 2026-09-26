@@ -1,13 +1,15 @@
 {
-  "name": "QuickSave Media Saver",
+  "name": "QuickSave - Video Downloader",
   "short_name": "QuickSave",
+  "description": "Download Instagram, Facebook, Twitter videos instantly",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#080b16",
-  "theme_color": "#080b16",
-  "description": "QuickSave - Save videos from Instagram, YouTube, TikTok, Facebook",
+  "theme_color": "#7c6cfc",
+  "orientation": "portrait-primary",
+  "scope": "/",
   "share_target": {
-    "action": "/",
+    "action": "/share",
     "method": "GET",
     "params": {
       "title": "title",
@@ -17,10 +19,38 @@
   },
   "icons": [
     {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow"
+    }
+  ],
+  "categories": ["utilities", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Paste & Download",
+      "url": "/?action=paste",
+      "description": "Paste URL and download"
     }
   ]
 }
