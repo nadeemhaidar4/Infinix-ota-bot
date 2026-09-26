@@ -1,19 +1,20 @@
-/* QuickSave app.js v5.0 */
-console.log("QuickSave app.js v5.0 loaded");
+/* QuickSave app.js v6.0 — Instagram, Facebook, Twitter only */
+console.log("QuickSave app.js v6.0 loaded");
 
 const $ = id => document.getElementById(id);
-const url        = $("url"),
-      paste      = $("paste"),
-      go         = $("go"),
-      drop       = $("drop"),
-      status     = $("status"),
-      result     = $("result"),
-      name       = $("name"),
-      meta       = $("meta"),
-      download   = $("download"),
-      thumb      = $("thumb"),
-      progress   = $("progress"),
-      bar        = $("bar"),
+
+const url          = $("url"),
+      paste        = $("paste"),
+      go           = $("go"),
+      drop         = $("drop"),
+      status       = $("status"),
+      result       = $("result"),
+      name         = $("name"),
+      meta         = $("meta"),
+      download     = $("download"),
+      thumb        = $("thumb"),
+      progress     = $("progress"),
+      bar          = $("bar"),
       progressText = $("progressText"),
       progressPct  = $("progressPct"),
       historyPanel = $("historyPanel"),
@@ -24,17 +25,30 @@ const url        = $("url"),
       autoToggle   = $("autoToggle"),
       autoLabel    = $("autoLabel");
 
-let current       = null;
-let installPrompt = null;
+let current        = null;
+let installPrompt  = null;
 let autoProcessing = false;
+
+/* ── Supported Platforms - Sirf 3 ── */
+const SUPPORTED = [
+  "instagram.com",
+  "facebook.com", "fb.watch",
+  "twitter.com",  "x.com"
+];
+
+function isSupportedUrl(u) {
+  try {
+    const h = new URL(u).hostname.replace(/^www\./, "");
+    return SUPPORTED.some(p => h.includes(p));
+  } catch { return false; }
+}
 
 /* ── iOS Detection ── */
 function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 }
-
 function isInStandaloneMode() {
-  return window.matchMedia('(display-mode: standalone)').matches || 
+  return window.matchMedia("(display-mode: standalone)").matches ||
          window.navigator.standalone === true;
 }
 
@@ -44,13 +58,12 @@ function isAutoEnabled() {
 }
 function setAuto(val) {
   localStorage.setItem("qs_auto", val ? "true" : "false");
-  autoToggle.checked = val;
+  autoToggle.checked    = val;
   autoLabel.textContent = val ? "Auto ON" : "Auto OFF";
 }
-
 autoToggle.addEventListener("change", () => setAuto(autoToggle.checked));
 
-/* ── helpers ── */
+/* ── Helpers ── */
 function msg(t, c = "") {
   status.textContent = t;
   status.className   = "status " + c;
@@ -58,7 +71,7 @@ function msg(t, c = "") {
 }
 
 function size(n) {
-  if (!n) return "Size unavailable";
+  if (!n) return "Size unknown";
   const u = ["B","KB","MB","GB"];
   let i = 0;
   while (n >= 1024 && i < 3) { n /= 1024; i++; }
@@ -72,23 +85,11 @@ function escapeHtml(s) {
 }
 
 function buildDlUrl(d) {
-  if (!d || !d.id) return "#";
+  if (!d?.id) return "#";
   return `/api/download?id=${encodeURIComponent(d.id)}`;
 }
 
-function isSupportedUrl(u) {
-  try {
-    const h = new URL(u).hostname.replace(/^www\./, "");
-    return [
-      "instagram.com","facebook.com","fb.watch",
-      "tiktok.com","youtube.com","youtu.be",
-      "twitter.com","x.com","reddit.com",
-      "vimeo.com","dailymotion.com"
-    ].some(p => h.includes(p));
-  } catch { return false; }
-}
-
-/* ── history ── */
+/* ── History ── */
 function saveHistory(item) {
   let h = JSON.parse(localStorage.getItem("qs_history") || "[]");
   h = [item, ...h.filter(x => x.id !== item.id)].slice(0, 8);
@@ -107,7 +108,7 @@ function renderHistory() {
         <b>${escapeHtml(x.name || "media")}</b>
         <small>${escapeHtml(x.type || "media")} • ${new Date(x.time).toLocaleString()}</small>
       </div>
-      <a href="${href}" download="${escapeHtml(x.name || 'media')}">Download</a>
+      <a href="${href}" download="${escapeHtml(x.name || "media")}">Download</a>
     </div>`;
   }).join("");
 }
@@ -117,94 +118,93 @@ $("clearHistory").onclick = () => {
   renderHistory();
 };
 
-/* ── Auto clipboard paste ── */
+/* ── Clipboard ── */
 async function tryAutoPaste() {
   if (!isAutoEnabled()) return null;
   try {
     const text = (await navigator.clipboard.readText()).trim();
-    if (text && isSupportedUrl(text)) {
-      return text;
-    }
+    if (text && isSupportedUrl(text)) return text;
   } catch {}
   return null;
 }
 
-/* ── Main process function ── */
+/* ── Main Process ── */
 async function processUrl(value, autoDownload = false) {
   if (!value || autoProcessing) return;
-  autoProcessing = true;
 
-  url.value = value;
-  go.disabled = true;
+  // Platform check client-side
+  if (!isSupportedUrl(value)) {
+    msg("Only Instagram, Facebook, and Twitter/X links are supported.", "err");
+    return;
+  }
+
+  autoProcessing = true;
+  url.value      = value;
+  go.disabled    = true;
   result.classList.add("hide");
   progress.classList.add("hide");
 
   const btnText = [...go.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
   if (btnText) btnText.textContent = "Checking… ";
-  msg("Checking the link…");
+  msg("Fetching media info…");
 
   try {
     const r = await fetch("/api/inspect", {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: value })
+      body:    JSON.stringify({ url: value })
     });
     const d = await r.json();
 
     if (!r.ok || !d.ok) throw new Error(d.message || "Could not process link.");
-    if (!d.id) throw new Error("Server error: no download ID.");
+    if (!d.id)          throw new Error("Server error: no download ID.");
 
     current = d;
-    const dlUrl = buildDlUrl(d);
 
     name.textContent = d.filename || "media.mp4";
     meta.textContent = (d.contentType || "media") + (d.size ? " • " + size(d.size) : "");
     showPreview(d);
 
-    download.href = dlUrl;
+    download.href = buildDlUrl(d);
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
 
     result.classList.remove("hide");
     msg("✓ Media ready! Tap Download to save.", "ok");
 
-    if (autoDownload && isAutoEnabled()) {
-      msg("Auto-downloading…", "ok");
-      triggerDownload(d);
-    }
+    if (autoDownload && isAutoEnabled()) triggerDownload(d);
 
   } catch (e) {
     console.error("Process failed:", e);
     msg(e.message || "Something went wrong.", "err");
   } finally {
-    go.disabled = false;
+    go.disabled    = false;
     autoProcessing = false;
     if (btnText) btnText.textContent = "Get media ";
   }
 }
 
+/* ── Trigger Download ── */
 function triggerDownload(d) {
-  if (!d || !d.id) return;
+  if (!d?.id) return;
   const dlUrl = buildDlUrl(d);
-  
+
   saveHistory({
     id:   d.id,
-    name: d.filename || "media.mp4",
+    name: d.filename    || "media.mp4",
     type: d.contentType || "media",
     time: Date.now()
   });
 
   progress.classList.remove("hide");
   progressText.textContent = "Starting download…";
-  bar.style.width   = "10%";
-  progressPct.textContent = "10%";
+  bar.style.width          = "10%";
+  progressPct.textContent  = "10%";
 
-  // iOS ke liye alag handling
   if (isIOS()) {
-    // iOS mein direct window.location se download trigger karo
     window.location.href = dlUrl;
   } else {
     const a = document.createElement("a");
-    a.href = dlUrl;
+    a.href     = dlUrl;
     a.download = d.filename || "QuickSave_Media.mp4";
     a.style.display = "none";
     document.body.appendChild(a);
@@ -213,65 +213,53 @@ function triggerDownload(d) {
   }
 
   setTimeout(() => {
-    bar.style.width = "100%";
+    bar.style.width         = "100%";
     progressPct.textContent = "Ready";
-    progressText.textContent = isIOS() 
-      ? "Download started — tap & hold to save video." 
+    progressText.textContent = isIOS()
+      ? "Download started — tap & hold to save."
       : "Download started — check your Downloads folder.";
-  }, 500);
+  }, 600);
 }
 
 /* ── Preview ── */
 function showPreview(d) {
-  thumb.innerHTML = "";
-  thumb.style.overflow = "hidden";
-  thumb.style.cursor = "pointer";
-
+  thumb.innerHTML     = "";
+  thumb.style.cursor  = "pointer";
   thumb.onclick = () => {
-    const playUrl = `/api/download?id=${d.id}&inline=1`;
-    window.open(playUrl, '_blank');
+    window.open(`/api/download?id=${d.id}&inline=1`, "_blank");
   };
-  
+
   if (d.thumbnail) {
-    const img = new Image();
-    img.src = d.thumbnail;
-    img.style.width = "100%";
-    img.style.height = "100%";
-    img.style.objectFit = "cover";
-    img.style.display = "block";
+    const img       = new Image();
+    img.src         = d.thumbnail;
+    img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
     img.onload  = () => thumb.appendChild(img);
     img.onerror = () => (thumb.innerHTML = "<span>▶</span>");
   } else {
     const mime = (d.contentType || "").toLowerCase();
-    if (mime.startsWith("image/")) {
-       thumb.innerHTML = "<span>◈</span>";
-    } else if (mime.startsWith("video/")) {
-      thumb.innerHTML = "<span>▶</span>";
-    } else {
-      thumb.innerHTML = "<span>♪</span>";
-    }
+    thumb.innerHTML = mime.startsWith("image/") ? "<span>◈</span>"
+      : mime.startsWith("video/")               ? "<span>▶</span>"
+      :                                            "<span>♪</span>";
   }
 }
 
-/* ── Paste button ── */
+/* ── Paste Button ── */
 paste.onclick = async () => {
   try {
     const text = (await navigator.clipboard.readText()).trim();
     if (text) {
-      url.value = text;
+      url.value         = text;
       paste.textContent = "Pasted ✓";
       setTimeout(() => (paste.textContent = "Paste"), 1200);
-      if (isAutoEnabled() && isSupportedUrl(text)) {
-        processUrl(text, true);
-      }
+      if (isAutoEnabled() && isSupportedUrl(text)) processUrl(text, true);
     }
   } catch {
-    msg("Clipboard unavailable. Paste manually.", "err");
+    msg("Clipboard unavailable. Please paste manually.", "err");
     url.focus();
   }
 };
 
-/* ── Get media button ── */
+/* ── Get Media Button ── */
 go.onclick = () => {
   const value = url.value.trim();
   if (!value) return msg("Paste a media URL first.", "err");
@@ -285,86 +273,76 @@ url.onkeydown = e => {
   }
 };
 
-/* ── Download button ── */
-download.addEventListener("click", (e) => {
-  if (!current || !current.id) return;
-  
+/* ── Download Button ── */
+download.addEventListener("click", e => {
+  if (!current?.id) return;
+
   const dlUrl = buildDlUrl(current);
-  
+
   saveHistory({
     id:   current.id,
-    name: current.filename || "media.mp4",
+    name: current.filename    || "media.mp4",
     type: current.contentType || "media",
     time: Date.now()
   });
 
   progress.classList.remove("hide");
   progressText.textContent = "Starting download…";
-  bar.style.width = "10%";
-  progressPct.textContent = "10%";
+  bar.style.width          = "10%";
+  progressPct.textContent  = "10%";
 
-  // iOS ke liye alag behavior
   if (isIOS()) {
     e.preventDefault();
     window.location.href = dlUrl;
     setTimeout(() => {
-      bar.style.width = "100%";
+      bar.style.width         = "100%";
       progressPct.textContent = "Ready";
-      progressText.textContent = "Download started — tap & hold video to save to Photos.";
-    }, 500);
+      progressText.textContent = "Download started — tap & hold video to save.";
+    }, 600);
     return;
   }
 
-  // Android/Desktop ke liye normal download
   download.href = dlUrl;
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
-  
+
   setTimeout(() => {
-    bar.style.width = "100%";
+    bar.style.width         = "100%";
     progressPct.textContent = "Ready";
     progressText.textContent = "Download started — check your Downloads folder.";
-  }, 500);
+  }, 600);
 });
 
-/* ── Drag drop ── */
-["dragenter","dragover"].forEach(e =>
-  drop.addEventListener(e, x => { x.preventDefault(); drop.classList.add("drag"); })
+/* ── Drag & Drop ── */
+["dragenter","dragover"].forEach(ev =>
+  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.add("drag"); })
 );
-["dragleave","drop"].forEach(e =>
-  drop.addEventListener(e, x => { x.preventDefault(); drop.classList.remove("drag"); })
+["dragleave","drop"].forEach(ev =>
+  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.remove("drag"); })
 );
 drop.addEventListener("drop", e => {
-  const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/uri-list");
+  const text = e.dataTransfer.getData("text/plain") ||
+               e.dataTransfer.getData("text/uri-list");
   if (text) processUrl(text.trim(), isAutoEnabled() && isSupportedUrl(text.trim()));
 });
 
-/* ── PWA Install - Android ── */
+/* ── PWA Install (Android) ── */
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   installPrompt = e;
-  // Sirf non-iOS ke liye dikhaao
-  if (!isIOS()) {
-    install.classList.remove("hidden");
-  }
+  if (!isIOS()) install.classList.remove("hidden");
 });
-
 install.onclick = async () => {
   if (!installPrompt) return;
   installPrompt.prompt();
-  const { outcome } = await installPrompt.userChoice;
-  console.log("Install outcome:", outcome);
+  await installPrompt.userChoice;
   installPrompt = null;
   install.classList.add("hidden");
 };
 
-/* ── iOS Install Instructions ── */
-function showIOSInstall() {
-  if (iosInstall) iosInstall.classList.remove("hidden");
-}
-
+/* ── iOS Install Banner ── */
 if (iosDismiss) {
   iosDismiss.onclick = () => {
-    if (iosInstall) iosInstall.classList.add("hidden");
+    iosInstall?.classList.add("hidden");
     localStorage.setItem("qs_ios_dismissed", "true");
   };
 }
@@ -376,33 +354,28 @@ if ("serviceWorker" in navigator) {
   );
 }
 
-/* ══════════════════════════════
-   STARTUP LOGIC
-══════════════════════════════ */
+/* ── Startup ── */
 async function onStartup() {
   setAuto(isAutoEnabled());
-  
-  // iOS install banner dikhao (agar pehle dismiss nahi kiya aur standalone nahi hai)
-  if (isIOS() && !isInStandaloneMode()) {
-    const dismissed = localStorage.getItem("qs_ios_dismissed");
-    if (!dismissed) {
-      setTimeout(() => showIOSInstall(), 2000);
-    }
+
+  // iOS banner
+  if (isIOS() && !isInStandaloneMode() && !localStorage.getItem("qs_ios_dismissed")) {
+    setTimeout(() => iosInstall?.classList.remove("hidden"), 2500);
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const sharedUrl = params.get("url") || params.get("text") || params.get("title");
-  if (sharedUrl && isSupportedUrl(sharedUrl.trim())) {
-    console.log("Shared URL detected:", sharedUrl);
+  // Shared URL (from Share menu)
+  const params    = new URLSearchParams(window.location.search);
+  const sharedUrl = (params.get("url") || params.get("text") || params.get("title") || "").trim();
+  if (sharedUrl && isSupportedUrl(sharedUrl)) {
     window.history.replaceState({}, "", "/");
-    await processUrl(sharedUrl.trim(), true);
+    await processUrl(sharedUrl, true);
     return;
   }
 
+  // Auto clipboard
   if (isAutoEnabled()) {
     const autoPasted = await tryAutoPaste();
     if (autoPasted) {
-      console.log("Auto-pasted:", autoPasted);
       msg("URL detected! Processing…", "ok");
       await processUrl(autoPasted, true);
       return;
@@ -412,16 +385,16 @@ async function onStartup() {
   renderHistory();
 }
 
+/* ── Visibility change (app focus) ── */
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible") return;
   if (autoProcessing) return;
   if (!isAutoEnabled()) return;
 
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
 
   const autoPasted = await tryAutoPaste();
   if (autoPasted && autoPasted !== url.value.trim()) {
-    console.log("New URL on focus:", autoPasted);
     msg("New URL detected! Processing…", "ok");
     await processUrl(autoPasted, true);
   }
