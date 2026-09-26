@@ -5,19 +5,37 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080b16">
   <meta name="description" content="QuickSave — Save videos from Instagram, YouTube, TikTok, Facebook">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="QuickSave">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <title>QuickSave — Media Saver</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div class="orb o1"></div>
 <div class="orb o2"></div>
+
+<!-- iOS Install Banner -->
+<div id="iosInstall" class="ios-install hidden">
+  <div class="ios-install-content">
+    <div class="ios-install-icon">↧</div>
+    <div class="ios-install-text">
+      <strong>Install QuickSave</strong>
+      <span>Tap <b>Share</b> <span class="share-icon">⎋</span> then <b>"Add to Home Screen"</b></span>
+    </div>
+    <button id="iosDismiss" class="ios-dismiss">✕</button>
+  </div>
+</div>
+
 <main>
   <nav>
     <a class="brand" href="/"><b>↧</b>Quick<span>Save</span></a>
     <div class="navright">
-      <button id="install" class="install hidden">Install app</button>
+      <!-- Android ke liye Install button -->
+      <button id="install" class="install hidden">⬇ Install</button>
       <!-- Auto Toggle -->
       <label class="autolabel">
         <input type="checkbox" id="autoToggle">
@@ -36,7 +54,7 @@
       <div class="droptext">Drop a media URL here</div>
       <div class="input">
         <span>⌁</span>
-        <input id="url" placeholder="Paste Instagram, YouTube, TikTok link…" autocomplete="off">
+        <input id="url" placeholder="Paste Instagram, YouTube, TikTok link…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
         <button id="paste" type="button">Paste</button>
       </div>
       <button id="go" class="go" type="button">Get media <strong>→</strong></button>
@@ -61,7 +79,7 @@
         </div>
         <i><b id="bar"></b></i>
       </div>
-      <a id="download" class="download" href="#">Download file <strong>↓</strong></a>
+      <a id="download" class="download" href="#">⬇ Download file</a>
     </section>
 
     <section id="historyPanel" class="history hide">
