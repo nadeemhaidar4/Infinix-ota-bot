@@ -12,18 +12,103 @@ const youtubedl = require("youtube-dl-exec");
 const app = express();
 
 const PORT = process.env.PORT || 10000;
-const MAX_BYTES = 250 * 1024 * 1024;
+const MAX_BYTES = 100 * 1024 * 1024; // 100MB max
 const INSPECT_TIMEOUT = 90000;
 const DOWNLOAD_TIMEOUT = 300000;
 const MAX_REDIRECTS = 4;
-const MAX_ACTIVE_PER_IP = 3;
 const RATE_WINDOW = 60 * 1000;
-const RATE_LIMIT = 20;
+const RATE_LIMIT = 15;
 const PUBLIC_DIR = path.join(__dirname, "public");
 const COOKIES_FILE = path.join(__dirname, "cookies.txt");
 
+/* ════════════════════════════════════════
+   QUEUE SYSTEM CONFIG
+════════════════════════════════════════ */
+const MAX_CONCURRENT = 2;        // Ek saath max 2 process
+const MAX_QUEUE_SIZE = 10;       // Max 10 log wait kar sakte hain
+const QUEUE_TIMEOUT  = 120000;   // 2 min se zyada wait nahi
+
+class RequestQueue {
+  constructor() {
+    this.queue      = [];
+    this.processing = 0;
+  }
+
+  // Queue ki current state
+  getStatus() {
+    return {
+      processing: this.processing,
+      waiting:    this.queue.length,
+      available:  this.processing < MAX_CONCURRENT
+    };
+  }
+
+  // Naya request add karo
+  add(fn) {
+    return new Promise((resolve, reject) => {
+      // Queue full hai
+      if (this.queue.length >= MAX_QUEUE_SIZE) {
+        return reject(new Error(
+          `Server is busy. ${this.queue.length} requests waiting. Please try again in a moment.`
+        ));
+      }
+
+      const item = {
+        fn,
+        resolve,
+        reject,
+        addedAt:   Date.now(),
+        timeoutId: setTimeout(() => {
+          // Queue se hata do agar timeout ho
+          const idx = this.queue.indexOf(item);
+          if (idx !== -1) {
+            this.queue.splice(idx, 1);
+            reject(new Error("Request timed out in queue. Please try again."));
+          }
+        }, QUEUE_TIMEOUT)
+      };
+
+      this.queue.push(item);
+      console.log(`[queue] Added. Queue: ${this.queue.length}, Processing: ${this.processing}`);
+      this._process();
+    });
+  }
+
+  // Next item process karo
+  _process() {
+    if (this.processing >= MAX_CONCURRENT) return;
+    if (this.queue.length === 0) return;
+
+    const item = this.queue.shift();
+    clearTimeout(item.timeoutId);
+
+    const waitTime = Date.now() - item.addedAt;
+    console.log(`[queue] Processing. Waited: ${waitTime}ms, Remaining: ${this.queue.length}`);
+
+    this.processing++;
+
+    Promise.resolve()
+      .then(() => item.fn())
+      .then(result => {
+        item.resolve(result);
+      })
+      .catch(err => {
+        item.reject(err);
+      })
+      .finally(() => {
+        this.processing--;
+        console.log(`[queue] Done. Processing: ${this.processing}, Waiting: ${this.queue.length}`);
+        this._process(); // Next item
+      });
+  }
+}
+
+const queue = new RequestQueue();
+
+/* ════════════════════════════════════════
+   MAPS
+════════════════════════════════════════ */
 const rateMap         = new Map();
-const activeMap       = new Map();
 const extractionCache = new Map();
 
 app.use(express.json({ limit: "100kb" }));
@@ -49,10 +134,7 @@ function isPrivateIPv6(ip) {
 }
 async function isBlockedHost(hostname) {
   const host = hostname.toLowerCase();
-  if (
-    host==="localhost"||host.endsWith(".localhost")||
-    host==="local"||host==="metadata.google.internal"
-  ) return true;
+  if (host==="localhost"||host.endsWith(".localhost")||host==="local"||host==="metadata.google.internal") return true;
   const type = net.isIP(host);
   if (type===4) return isPrivateIPv4(host);
   if (type===6) return isPrivateIPv6(host);
@@ -78,23 +160,29 @@ async function validateUrl(rawUrl) {
 }
 
 /* ════════════════════════════════════════
-   RATE / CONCURRENCY
+   RATE LIMIT
 ════════════════════════════════════════ */
 function checkRateLimit(ip) {
   const now = Date.now();
   let r = rateMap.get(ip);
-  if (!r||now-r.start>RATE_WINDOW) { r={start:now,count:0}; rateMap.set(ip,r); }
+  if (!r||now-r.start>RATE_WINDOW) {
+    r = {start:now, count:0};
+    rateMap.set(ip, r);
+  }
   r.count++;
-  return r.count<=RATE_LIMIT;
+  return r.count <= RATE_LIMIT;
 }
-function acquireDownload(ip) {
-  const c = activeMap.get(ip)||0;
-  if (c>=MAX_ACTIVE_PER_IP) return false;
-  activeMap.set(ip,c+1); return true;
+
+/* ════════════════════════════════════════
+   MEMORY CHECK
+════════════════════════════════════════ */
+function getMemoryMB() {
+  return process.memoryUsage().heapUsed / 1024 / 1024;
 }
-function releaseDownload(ip) {
-  const c = activeMap.get(ip)||0;
-  if (c<=1) activeMap.delete(ip); else activeMap.set(ip,c-1);
+function isMemorySafe() {
+  const used = getMemoryMB();
+  console.log(`[memory] Heap: ${used.toFixed(1)}MB`);
+  return used < 400; // 400MB se upar nahi jaane denge
 }
 
 /* ════════════════════════════════════════
@@ -125,32 +213,22 @@ function isValidMediaType(ct) {
 }
 
 /* ════════════════════════════════════════
-   PLATFORM DETECTION
-   Sirf Instagram, Facebook, Twitter
+   PLATFORM
 ════════════════════════════════════════ */
 function getPlatform(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./,"");
-    if (h.includes("instagram.com"))                    return "instagram";
+    if (h.includes("instagram.com"))                     return "instagram";
     if (h.includes("facebook.com")||h.includes("fb.watch")) return "facebook";
-    if (h.includes("twitter.com")||h.includes("x.com")) return "twitter";
+    if (h.includes("twitter.com")||h.includes("x.com"))  return "twitter";
     return null;
   } catch { return null; }
 }
-
 function isSupportedUrl(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./,"");
-    // CDN URLs supported nahi
-    if (
-      h.includes("cdninstagram.com")||h.includes("fbcdn.net")||
-      h.includes("twimg.com")
-    ) return false;
-    return [
-      "instagram.com",
-      "facebook.com","fb.watch",
-      "twitter.com","x.com"
-    ].some(p=>h.includes(p));
+    if (h.includes("cdninstagram.com")||h.includes("fbcdn.net")||h.includes("twimg.com")) return false;
+    return ["instagram.com","facebook.com","fb.watch","twitter.com","x.com"].some(p=>h.includes(p));
   } catch { return false; }
 }
 
@@ -158,7 +236,6 @@ function isSupportedUrl(urlStr) {
    CACHE
 ════════════════════════════════════════ */
 function makeDownloadId() { return crypto.randomBytes(12).toString("hex"); }
-
 function cacheExtraction(originalUrl, extractedData) {
   const downloadId = makeDownloadId();
   const payload = {...extractedData, originalUrl, downloadId, createdAt:Date.now()};
@@ -174,32 +251,23 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   yt-dlp BINARY
+   yt-dlp
 ════════════════════════════════════════ */
 function getYtdlpBinary() {
-  const locations = [
-    "/usr/local/bin/yt-dlp",
-    "/usr/bin/yt-dlp",
-    process.env.YTDLP_PATH,
-  ].filter(Boolean);
-
+  const locations = ["/usr/local/bin/yt-dlp","/usr/bin/yt-dlp",process.env.YTDLP_PATH].filter(Boolean);
   for (const loc of locations) {
     try { if (fs.existsSync(loc)) return loc; } catch {}
   }
   try {
     const pkg = require("youtube-dl-exec");
-    const binPath = pkg.path||pkg.binaryPath;
-    if (binPath&&fs.existsSync(binPath)) return binPath;
+    const b = pkg.path||pkg.binaryPath;
+    if (b&&fs.existsSync(b)) return b;
   } catch {}
   return "yt-dlp";
 }
-
 const YTDLP_BINARY = getYtdlpBinary();
 
-/* ════════════════════════════════════════
-   yt-dlp RUNNER
-════════════════════════════════════════ */
-function runYtdlp(url, extraArgs, timeoutMs=60000) {
+function runYtdlp(url, extraArgs, timeoutMs=50000) {
   return new Promise((resolve, reject) => {
     const args = [
       url,
@@ -207,80 +275,55 @@ function runYtdlp(url, extraArgs, timeoutMs=60000) {
       "--no-check-certificates",
       "--no-warnings",
       "--no-playlist",
-      "--socket-timeout","20",
-      "--retries","2",
+      "--socket-timeout","15",
+      "--retries","1",
       "--no-cache-dir",
       ...extraArgs
     ];
-
-    if (fs.existsSync(COOKIES_FILE)) {
-      args.push("--cookies", COOKIES_FILE);
-    }
+    if (fs.existsSync(COOKIES_FILE)) args.push("--cookies", COOKIES_FILE);
 
     execFile(YTDLP_BINARY, args, {
       timeout: timeoutMs,
-      maxBuffer: 50*1024*1024,
+      maxBuffer: 30*1024*1024,
       env: {...process.env, PYTHONIOENCODING:"utf-8"}
     }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error((stderr||error.message||"").trim()));
-        return;
-      }
+      if (error) { reject(new Error((stderr||error.message||"").trim())); return; }
       try { resolve(JSON.parse(stdout)); }
       catch { reject(new Error("Failed to parse yt-dlp output")); }
     });
   });
 }
 
-/* ════════════════════════════════════════
-   OUTPUT PARSER
-════════════════════════════════════════ */
 function parseYtdlpOutput(output) {
   if (!output) return null;
   let directUrl=null, headers={};
 
   if (output.url&&output.url.startsWith("http")) {
-    directUrl = output.url;
-    headers   = {...(output.http_headers||{})};
+    directUrl=output.url; headers={...(output.http_headers||{})};
   }
   if (!directUrl&&output.requested_formats?.length) {
-    const vf = output.requested_formats.find(
-      f=>f.url&&f.url.startsWith("http")&&f.vcodec&&f.vcodec!=="none"
-    );
+    const vf=output.requested_formats.find(f=>f.url&&f.vcodec&&f.vcodec!=="none");
     if (vf) { directUrl=vf.url; headers={...(vf.http_headers||{})}; }
   }
   if (!directUrl&&output.formats?.length) {
-    const valid = output.formats
-      .filter(f=>f.url&&f.url.startsWith("http"))
-      .reverse();
-    const best =
-      valid.find(f=>f.vcodec!=="none"&&f.acodec!=="none")||
-      valid.find(f=>f.vcodec!=="none")||
-      valid[0];
+    const valid=output.formats.filter(f=>f.url&&f.url.startsWith("http")).reverse();
+    const best=valid.find(f=>f.vcodec!=="none"&&f.acodec!=="none")||valid.find(f=>f.vcodec!=="none")||valid[0];
     if (best) { directUrl=best.url; headers={...(best.http_headers||{})}; }
   }
 
   if (!directUrl) return null;
   delete headers["Host"]; delete headers["host"];
-
-  return {
-    url:       directUrl,
-    title:     output.title||output.id||"Video",
-    thumbnail: output.thumbnail||null,
-    headers
-  };
+  return { url:directUrl, title:output.title||output.id||"Video", thumbnail:output.thumbnail||null, headers };
 }
 
 /* ════════════════════════════════════════
-   INSTAGRAM EXTRACTOR
+   EXTRACTORS
 ════════════════════════════════════════ */
 async function extractInstagram(url) {
-  console.log("[instagram] Extracting:", url.slice(0,70));
-
   const strategies = [
     {
-      name: "chrome-desktop",
-      args: [
+      name:"chrome",
+      args:[
         "-f","best",
         "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "--add-header","Accept-Language:en-US,en;q=0.9",
@@ -288,133 +331,87 @@ async function extractInstagram(url) {
       ]
     },
     {
-      name: "android-app",
-      args: [
+      name:"android",
+      args:[
         "-f","best",
-        "--add-header","User-Agent:Instagram 219.0.0.12.117 Android (30/11; 420dpi; 1080x2154; samsung; SM-G991B; o1s; exynos2100)",
-        "--add-header","Accept-Language:en-US",
+        "--add-header","User-Agent:Instagram 219.0.0.12.117 Android",
       ]
     },
-    {
-      name: "no-header",
-      args: ["-f","best"]
-    }
+    { name:"default", args:["-f","best"] }
   ];
 
   for (const s of strategies) {
     try {
       console.log(`[instagram] Trying: ${s.name}`);
-      const output = await runYtdlp(url, s.args, 50000);
-      const result = parseYtdlpOutput(output);
-      if (result&&result.url) {
-        console.log(`[instagram] ✓ Success: ${s.name}`);
-        return result;
-      }
-    } catch (e) {
-      console.log(`[instagram] ✗ ${s.name}:`, e.message.slice(0,80));
-    }
+      const out = await runYtdlp(url, s.args);
+      const res = parseYtdlpOutput(out);
+      if (res?.url) { console.log(`[instagram] ✓ ${s.name}`); return res; }
+    } catch(e) { console.log(`[instagram] ✗ ${s.name}:`, e.message.slice(0,60)); }
   }
-
   throw new Error("Instagram video could not be extracted. It may be private or deleted.");
 }
 
-/* ════════════════════════════════════════
-   FACEBOOK EXTRACTOR
-════════════════════════════════════════ */
 async function extractFacebook(url) {
-  console.log("[facebook] Extracting:", url.slice(0,70));
-
   const strategies = [
     {
-      name: "chrome-desktop",
-      args: [
+      name:"chrome",
+      args:[
         "-f","best",
         "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "--add-header","Accept-Language:en-US,en;q=0.9",
       ]
     },
     {
-      name: "mobile",
-      args: [
+      name:"mobile",
+      args:[
         "-f","best",
-        "--add-header","User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+        "--add-header","User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
       ]
     },
-    {
-      name: "no-header",
-      args: ["-f","best"]
-    }
+    { name:"default", args:["-f","best"] }
   ];
 
   for (const s of strategies) {
     try {
       console.log(`[facebook] Trying: ${s.name}`);
-      const output = await runYtdlp(url, s.args, 50000);
-      const result = parseYtdlpOutput(output);
-      if (result&&result.url) {
-        console.log(`[facebook] ✓ Success: ${s.name}`);
-        return result;
-      }
-    } catch (e) {
-      console.log(`[facebook] ✗ ${s.name}:`, e.message.slice(0,80));
-    }
+      const out = await runYtdlp(url, s.args);
+      const res = parseYtdlpOutput(out);
+      if (res?.url) { console.log(`[facebook] ✓ ${s.name}`); return res; }
+    } catch(e) { console.log(`[facebook] ✗ ${s.name}:`, e.message.slice(0,60)); }
   }
-
-  throw new Error("Facebook video could not be extracted. It may be private or restricted.");
+  throw new Error("Facebook video could not be extracted. It may be private.");
 }
 
-/* ════════════════════════════════════════
-   TWITTER / X EXTRACTOR
-════════════════════════════════════════ */
 async function extractTwitter(url) {
-  console.log("[twitter] Extracting:", url.slice(0,70));
-
   const strategies = [
     {
-      name: "chrome-desktop",
-      args: [
+      name:"chrome",
+      args:[
         "-f","best[ext=mp4]/best",
-        "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       ]
     },
-    {
-      name: "no-header",
-      args: ["-f","best[ext=mp4]/best"]
-    }
+    { name:"default", args:["-f","best[ext=mp4]/best"] }
   ];
 
   for (const s of strategies) {
     try {
       console.log(`[twitter] Trying: ${s.name}`);
-      const output = await runYtdlp(url, s.args, 50000);
-      const result = parseYtdlpOutput(output);
-      if (result&&result.url) {
-        console.log(`[twitter] ✓ Success: ${s.name}`);
-        return result;
-      }
-    } catch (e) {
-      console.log(`[twitter] ✗ ${s.name}:`, e.message.slice(0,80));
-    }
+      const out = await runYtdlp(url, s.args);
+      const res = parseYtdlpOutput(out);
+      if (res?.url) { console.log(`[twitter] ✓ ${s.name}`); return res; }
+    } catch(e) { console.log(`[twitter] ✗ ${s.name}:`, e.message.slice(0,60)); }
   }
-
-  throw new Error("Twitter/X video could not be extracted. It may be private or restricted.");
+  throw new Error("Twitter/X video could not be extracted.");
 }
 
-/* ════════════════════════════════════════
-   MAIN EXTRACTOR
-════════════════════════════════════════ */
 async function extractDirectVideoUrl(pageUrl) {
   const platform = getPlatform(pageUrl);
-  console.log("[extract] Platform:", platform, "| URL:", pageUrl.slice(0,70));
+  console.log(`[extract] Platform: ${platform} | ${pageUrl.slice(0,60)}`);
 
-  if (!platform) {
-    throw new Error("Only Instagram, Facebook, and Twitter/X links are supported.");
-  }
-
+  if (!platform) throw new Error("Only Instagram, Facebook, and Twitter/X links are supported.");
   if (platform==="instagram") return extractInstagram(pageUrl);
   if (platform==="facebook")  return extractFacebook(pageUrl);
   if (platform==="twitter")   return extractTwitter(pageUrl);
-
   throw new Error("Unsupported platform.");
 }
 
@@ -428,9 +425,7 @@ async function fetchSafe(initialUrl, options={}, redirectCount=0) {
   const url = await validateUrl(initialUrl);
   const h = {"User-Agent":UA,"Accept":"*/*",...(options.headers||{})};
   delete h["Host"]; delete h["host"];
-  const response = await fetch(url,{
-    ...options, redirect:"manual", headers:h, signal:options.signal
-  });
+  const response = await fetch(url,{...options,redirect:"manual",headers:h,signal:options.signal});
   if ([301,302,303,307,308].includes(response.status)) {
     const loc = response.headers.get("location");
     if (!loc) throw new Error("Redirect location missing.");
@@ -440,12 +435,8 @@ async function fetchSafe(initialUrl, options={}, redirectCount=0) {
 }
 
 async function fetchCDN(targetUrl, headers, signal) {
-  const h = {
-    "User-Agent":UA, "Accept":"*/*", "Accept-Encoding":"identity",
-    ...headers
-  };
-  delete h["Host"]; delete h["host"];
-  delete h["Range"]; delete h["range"];
+  const h = {"User-Agent":UA,"Accept":"*/*","Accept-Encoding":"identity",...headers};
+  delete h["Host"]; delete h["host"]; delete h["Range"]; delete h["range"];
   return fetch(targetUrl,{method:"GET",headers:h,redirect:"follow",signal});
 }
 
@@ -455,16 +446,13 @@ async function fetchCDN(targetUrl, headers, signal) {
 async function streamToResponse(response, res, controller, startTime) {
   const contentLength = Number(response.headers.get("content-length")||0);
   if (contentLength&&contentLength>MAX_BYTES)
-    throw Object.assign(new Error("File exceeds 250 MB limit."),{status:413});
+    throw Object.assign(new Error("File exceeds 100 MB limit."),{status:413});
   if (!response.body) throw new Error("Media stream unavailable.");
   if (contentLength) res.setHeader("Content-Length",String(contentLength));
 
-  const nodeStream = Readable.fromWeb
-    ? Readable.fromWeb(response.body)
-    : response.body;
+  const nodeStream = Readable.fromWeb ? Readable.fromWeb(response.body) : response.body;
 
   let total=0, limitExceeded=false;
-
   const guard = new Writable({
     highWaterMark: 512*1024,
     write(chunk,_enc,cb) {
@@ -481,7 +469,7 @@ async function streamToResponse(response, res, controller, startTime) {
         res.end();
         const secs=((Date.now()-startTime)/1000).toFixed(1);
         const mbps=(total/1024/1024/parseFloat(secs)).toFixed(2);
-        console.log(`[dl] done ${(total/1024/1024).toFixed(1)}MB in ${secs}s @ ${mbps}MB/s`);
+        console.log(`[dl] ✓ ${(total/1024/1024).toFixed(1)}MB in ${secs}s @ ${mbps}MB/s`);
       }
       cb();
     }
@@ -495,13 +483,29 @@ async function streamToResponse(response, res, controller, startTime) {
    ROUTES
 ════════════════════════════════════════ */
 app.get("/health", (_req,res) => res.json({
-  ok:      true,
-  service: "QuickSave",
-  version: "6.0",
-  platforms: ["instagram","facebook","twitter"],
+  ok:       true,
+  service:  "QuickSave",
+  version:  "7.0",
+  memory:   `${getMemoryMB().toFixed(1)}MB`,
+  queue: {
+    processing: queue.processing,
+    waiting:    queue.queue.length,
+    maxConcurrent: MAX_CONCURRENT,
+    maxQueueSize:  MAX_QUEUE_SIZE
+  },
   ytdlp:   YTDLP_BINARY,
   cookies: fs.existsSync(COOKIES_FILE)
 }));
+
+/* ── Queue Status API ── */
+app.get("/api/queue", (_req,res) => {
+  res.json({
+    ok:         true,
+    processing: queue.processing,
+    waiting:    queue.queue.length,
+    available:  queue.processing < MAX_CONCURRENT
+  });
+});
 
 app.get("/share", (req,res) => {
   const shared = (req.query.url||req.query.text||req.query.title||"").trim();
@@ -510,118 +514,153 @@ app.get("/share", (req,res) => {
     : res.redirect(302,"/");
 });
 
-/* ── INSPECT ── */
+/* ════════════════════════════════════════
+   INSPECT - Queue ke saath
+════════════════════════════════════════ */
 app.post("/api/inspect", async (req,res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"]||req.socket.remoteAddress);
+
+  // Rate limit check
   if (!checkRateLimit(ip))
-    return res.status(429).json({ok:false,message:"Too many requests. Please wait."});
+    return res.status(429).json({ok:false, message:"Too many requests. Please wait a moment."});
 
+  // Platform check
+  const rawUrl = req.body?.url;
+  let urlObj;
+  try { urlObj = await validateUrl(rawUrl); }
+  catch(e) { return res.status(400).json({ok:false, message:e.message}); }
+
+  const targetUrlStr = urlObj.toString();
+
+  if (!isSupportedUrl(targetUrlStr))
+    return res.status(400).json({
+      ok:false, type:"unsupported",
+      message:"Only Instagram, Facebook, and Twitter/X links are supported."
+    });
+
+  // Cache check - queue ki zaroorat nahi
+  if (extractionCache.has(targetUrlStr)) {
+    const c = extractionCache.get(targetUrlStr);
+    console.log("[inspect] Cache hit - skipping queue");
+    return res.json({
+      ok:true, type:"media", id:c.downloadId,
+      downloadUrl:`/api/download?id=${c.downloadId}`,
+      directUrl:c.url, url:c.url,
+      originalUrl:targetUrlStr,
+      contentType:"video/mp4",
+      size:null,
+      filename:filenameFromUrl(c.url,"video/mp4",c.title),
+      thumbnail:c.thumbnail,
+      queuePosition: 0
+    });
+  }
+
+  // Memory check
+  if (!isMemorySafe())
+    return res.status(503).json({
+      ok:false,
+      message:`Server memory is high. Please try again in a moment.`
+    });
+
+  // Queue position batao
+  const queuePos = queue.queue.length + 1;
+  if (queuePos > 1) {
+    console.log(`[inspect] User will wait. Queue position: ${queuePos}`);
+  }
+
+  // Queue mein add karo
   try {
-    const rawUrl = req.body?.url;
-    let urlObj      = await validateUrl(rawUrl);
-    let targetUrl   = urlObj.toString();
-    let extractedTitle=null, customHeaders={}, useCDNFetch=false;
-    let downloadId=null, thumbnail=null;
+    const result = await queue.add(async () => {
+      console.log(`[inspect] Processing: ${targetUrlStr.slice(0,60)}`);
 
-    // Platform check
-    if (!isSupportedUrl(targetUrl)) {
-      return res.status(400).json({
-        ok:      false,
-        type:    "unsupported",
-        message: "Only Instagram, Facebook, and Twitter/X links are supported."
-      });
-    }
+      // Extraction
+      const data = await extractDirectVideoUrl(targetUrlStr);
+      const c    = cacheExtraction(targetUrlStr, data);
 
-    if (extractionCache.has(targetUrl)) {
-      const c = extractionCache.get(targetUrl);
-      targetUrl=c.url; extractedTitle=c.title; thumbnail=c.thumbnail;
-      customHeaders=c.headers||{}; downloadId=c.downloadId; useCDNFetch=true;
-      console.log("[inspect] cache hit");
+      // Media validate karo
+      const controller = new AbortController();
+      const timer      = setTimeout(()=>controller.abort(), INSPECT_TIMEOUT);
 
-    } else {
-      console.log("[inspect] Extracting:", targetUrl.slice(0,70));
-      const data = await extractDirectVideoUrl(targetUrl);
-      const c    = cacheExtraction(targetUrl, data);
-      targetUrl=c.url; extractedTitle=c.title; thumbnail=c.thumbnail;
-      customHeaders=c.headers||{}; downloadId=c.downloadId; useCDNFetch=true;
-    }
-
-    const controller = new AbortController();
-    const timer      = setTimeout(()=>controller.abort(), INSPECT_TIMEOUT);
-
-    try {
-      let response=null;
       try {
-        const h = {"User-Agent":UA,"Accept":"*/*",...customHeaders};
-        delete h["Host"]; delete h["host"]; delete h["Range"]; delete h["range"];
-        response = await fetch(targetUrl,{
-          method:"HEAD", headers:h, redirect:"follow", signal:controller.signal
-        });
-      } catch { response=null; }
+        let response = null;
+        try {
+          const h = {"User-Agent":UA,"Accept":"*/*",...(c.headers||{})};
+          delete h["Host"]; delete h["host"]; delete h["Range"]; delete h["range"];
+          response = await fetch(c.url,{method:"HEAD",headers:h,redirect:"follow",signal:controller.signal});
+        } catch { response=null; }
 
-      let contentType   = response ? getRawContentType(response) : "";
-      let contentLength = response ? Number(response.headers.get("content-length")||0) : 0;
+        let contentType   = response ? getRawContentType(response) : "video/mp4";
+        let contentLength = response ? Number(response.headers.get("content-length")||0) : 0;
 
-      if (!response||!response.ok||!isValidMediaType(contentType)) {
-        response = await fetchCDN(targetUrl, customHeaders, controller.signal);
-        contentType   = getRawContentType(response);
-        contentLength = Number(response.headers.get("content-length")||0);
-        try { await response.body?.cancel(); } catch {}
-      }
+        if (!response||!response.ok||!isValidMediaType(contentType)) {
+          response = await fetchCDN(c.url, c.headers||{}, controller.signal);
+          contentType   = getRawContentType(response);
+          contentLength = Number(response.headers.get("content-length")||0);
+          try { await response.body?.cancel(); } catch {}
+        }
 
-      if (contentType==="application/octet-stream") contentType="video/mp4";
+        if (contentType==="application/octet-stream") contentType="video/mp4";
 
-      if (!response.ok)
-        return res.status(400).json({
-          ok:false, type:"error",
-          message:`Server returned HTTP ${response.status}.`
-        });
+        if (!response.ok)
+          throw new Error(`Media server returned HTTP ${response.status}.`);
+        if (!isValidMediaType(contentType))
+          throw new Error("This URL does not contain a valid media file.");
+        if (contentLength&&contentLength>MAX_BYTES)
+          throw new Error("File is larger than 100 MB.");
 
-      if (!isValidMediaType(contentType))
-        return res.status(400).json({
-          ok:false, type:"unsupported",
-          message:"This URL does not contain a valid media file."
-        });
+        const filename = filenameFromUrl(c.url, contentType, c.title);
+        console.log(`[inspect] ✓ ${filename} ${contentType} ${contentLength}`);
 
-      if (contentLength&&contentLength>MAX_BYTES)
-        return res.status(400).json({
-          ok:false, type:"too-large",
-          message:"File is larger than 250 MB."
-        });
+        return {
+          ok:true, type:"media", id:c.downloadId,
+          downloadUrl:`/api/download?id=${c.downloadId}`,
+          directUrl:c.url, url:c.url,
+          originalUrl:targetUrlStr,
+          contentType:contentType||"video/mp4",
+          size:contentLength||null,
+          filename, thumbnail:c.thumbnail
+        };
 
-      const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
-      console.log("[inspect] ok:", filename, contentType, contentLength);
+      } finally { clearTimeout(timer); }
+    });
 
-      return res.json({
-        ok:true, type:"media", id:downloadId,
-        downloadUrl:`/api/download?id=${downloadId}`,
-        directUrl:targetUrl, url:targetUrl,
-        originalUrl:urlObj.toString(),
-        contentType:contentType||"video/mp4",
-        size:contentLength||null,
-        filename, thumbnail
-      });
-
-    } finally { clearTimeout(timer); }
+    return res.json(result);
 
   } catch(e) {
     console.error("[inspect] error:", e.message);
-    return res.status(400).json({
-      ok:false, type:"error",
-      message: e.message||"Unable to process this URL."
-    });
+
+    // Queue full error
+    if (e.message.includes("busy")||e.message.includes("waiting")) {
+      return res.status(503).json({
+        ok:false, type:"queue-full",
+        message:e.message,
+        queueSize: queue.queue.length
+      });
+    }
+
+    // Timeout in queue
+    if (e.message.includes("timed out in queue")) {
+      return res.status(408).json({
+        ok:false, type:"queue-timeout",
+        message:"Request timed out. Server is very busy. Please try again."
+      });
+    }
+
+    return res.status(400).json({ok:false, type:"error", message:e.message||"Unable to process this URL."});
   }
 });
 
-/* ── DOWNLOAD ── */
+/* ════════════════════════════════════════
+   DOWNLOAD - Queue ke saath
+════════════════════════════════════════ */
 app.get("/api/download", async (req,res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"]||req.socket.remoteAddress);
+
   if (!checkRateLimit(ip))
-    return res.status(429).json({ok:false,message:"Too many requests."});
-  if (!acquireDownload(ip))
-    return res.status(429).json({ok:false,message:"Too many active downloads."});
+    return res.status(429).json({ok:false, message:"Too many requests."});
 
   const startTime = Date.now();
+
   try {
     let targetUrl=null, extractedTitle=null, customHeaders={}, originalUrl=null;
     const idParam = req.query.id ? String(req.query.id).trim() : null;
@@ -629,35 +668,36 @@ app.get("/api/download", async (req,res) => {
     if (idParam) {
       const cached = extractionCache.get(idParam);
       if (!cached)
-        return res.status(410).json({
-          ok:false,
-          message:"Link expired. Please click 'Get media' again."
-        });
+        return res.status(410).json({ok:false, message:"Link expired. Please click 'Get media' again."});
       targetUrl=cached.url; extractedTitle=cached.title;
       customHeaders=cached.headers||{}; originalUrl=cached.originalUrl;
 
     } else {
       let rawUrl = req.query.url;
-      if (!rawUrl)
-        return res.status(400).json({ok:false, message:"id or url required."});
+      if (!rawUrl) return res.status(400).json({ok:false, message:"id or url required."});
       for(let i=0;i<2;i++){
         try{const d=decodeURIComponent(rawUrl);if(d===rawUrl)break;rawUrl=d;}catch{break;}
       }
       if (extractionCache.has(rawUrl)) {
-        const c = extractionCache.get(rawUrl);
+        const c=extractionCache.get(rawUrl);
         targetUrl=c.url; extractedTitle=c.title;
         customHeaders=c.headers||{}; originalUrl=c.originalUrl;
       } else {
-        const validated = await validateUrl(rawUrl);
-        targetUrl = validated.toString();
+        const validated=await validateUrl(rawUrl);
+        targetUrl=validated.toString();
         if (isSupportedUrl(targetUrl)) {
-          originalUrl = targetUrl;
-          const data = await extractDirectVideoUrl(targetUrl);
-          const c    = cacheExtraction(targetUrl, data);
+          originalUrl=targetUrl;
+          // Download ke liye bhi queue use karo
+          const data = await queue.add(() => extractDirectVideoUrl(targetUrl));
+          const c    = cacheExtraction(targetUrl,data);
           targetUrl=c.url; extractedTitle=c.title; customHeaders=c.headers||{};
         }
       }
     }
+
+    // Memory check before download
+    if (!isMemorySafe())
+      return res.status(503).json({ok:false, message:"Server is busy. Please try again shortly."});
 
     const controller = new AbortController();
     const timer      = setTimeout(()=>controller.abort(), DOWNLOAD_TIMEOUT);
@@ -668,48 +708,40 @@ app.get("/api/download", async (req,res) => {
       let contentType = getRawContentType(response);
       if (contentType==="application/octet-stream") contentType="video/mp4";
 
-      // Agar CDN response bad hai to re-extract karo
       if (!response.ok||!isValidMediaType(contentType)) {
         if (originalUrl&&isSupportedUrl(originalUrl)) {
           try {
-            console.log("[dl] Re-extracting:", originalUrl.slice(0,70));
-            const fresh = await extractDirectVideoUrl(originalUrl);
-            const c     = cacheExtraction(originalUrl, fresh);
+            const fresh = await queue.add(() => extractDirectVideoUrl(originalUrl));
+            const c     = cacheExtraction(originalUrl,fresh);
             targetUrl=c.url; customHeaders=c.headers||{}; extractedTitle=fresh.title;
-            response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
+            response    = await fetchCDN(targetUrl,customHeaders,controller.signal);
             contentType = getRawContentType(response);
             if (contentType==="application/octet-stream") contentType="video/mp4";
           } catch {
-            return res.status(502).json({
-              ok:false,
-              message:"Media expired. Please click 'Get media' again."
-            });
+            return res.status(502).json({ok:false, message:"Media expired. Please click 'Get media' again."});
           }
         }
         if (!response.ok||!isValidMediaType(contentType))
-          return res.status(502).json({
-            ok:false,
-            message:`Media fetch failed (${response.status}).`
-          });
+          return res.status(502).json({ok:false, message:`Media fetch failed (${response.status}).`});
       }
 
-      const filename        = filenameFromUrl(targetUrl, contentType, extractedTitle);
+      const filename        = filenameFromUrl(targetUrl,contentType,extractedTitle);
       const safeFilename    = filename.replace(/[\r\n"']/g,"");
       const encodedFilename = encodeURIComponent(safeFilename);
       const wantInline      = req.query.inline==="1";
 
       res.status(200);
-      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Type",contentType);
       res.setHeader("Content-Disposition",
         wantInline
-          ? `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
-          : `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+          ?`inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+          :`attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
       );
       res.setHeader("Cache-Control","no-store");
       res.setHeader("Accept-Ranges","none");
       res.setHeader("X-Content-Type-Options","nosniff");
 
-      await streamToResponse(response, res, controller, startTime);
+      await streamToResponse(response,res,controller,startTime);
 
     } finally { clearTimeout(timer); }
 
@@ -718,12 +750,10 @@ app.get("/api/download", async (req,res) => {
     if (!res.headersSent)
       res.status(e.status||400).json({
         ok:false,
-        message: e.name==="AbortError"
-          ? "Download timed out."
-          : e.message||"Download failed."
+        message: e.name==="AbortError" ? "Download timed out." : e.message||"Download failed."
       });
     else res.destroy();
-  } finally { releaseDownload(ip); }
+  }
 });
 
 /* ════════════════════════════════════════
@@ -734,14 +764,14 @@ app.use((_req,res)=>res.sendFile(path.join(PUBLIC_DIR,"index.html")));
 app.use((err,_req,res,next)=>{
   console.error("Server error:",err);
   if (res.headersSent) return next(err);
-  res.status(500).json({ok:false,message:"Internal server error."});
+  res.status(500).json({ok:false, message:"Internal server error."});
 });
 
 /* ════════════════════════════════════════
    START
 ════════════════════════════════════════ */
 const server = app.listen(PORT,"0.0.0.0",()=>
-  console.log(`QuickSave v6.0 running on port ${PORT}`)
+  console.log(`QuickSave v7.0 running on port ${PORT}`)
 );
 function shutdown(sig) {
   console.log(sig+" received");
