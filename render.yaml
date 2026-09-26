@@ -3,8 +3,8 @@ services:
     name: quicksave
     runtime: node
     plan: starter
-    buildCommand: npm install
-    startCommand: npm start
+    buildCommand: npm install && npx yt-dlp --update-to stable || true
+    startCommand: node --max-old-space-size=450 server.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
