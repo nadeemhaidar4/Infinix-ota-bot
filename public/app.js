@@ -72,7 +72,6 @@ function msg(t, c = "") {
   status.className   = "status " + c;
   status.classList.toggle("hide", !t);
 }
-
 function size(n) {
   if (!n) return "";
   const u = ["B","KB","MB","GB"];
@@ -80,30 +79,14 @@ function size(n) {
   while (n >= 1024 && i < 3) { n /= 1024; i++; }
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
 }
-
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g,
     m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m])
   );
 }
-
 function buildDlUrl(d) {
   if (!d?.id) return "#";
   return `/api/download?id=${encodeURIComponent(d.id)}`;
-}
-
-/* ── Monetag Interstitial Ad ── */
-function showMoneyAd() {
-  try {
-    // Monetag interstitial trigger
-    if (typeof window.monetagShowAd === "function") {
-      window.monetagShowAd();
-    }
-    // Ya direct show karo
-    if (typeof show_8916606 === "function") {
-      show_8916606(); // apna function name daalo
-    }
-  } catch {}
 }
 
 /* ── History ── */
@@ -113,7 +96,6 @@ function saveHistory(item) {
   localStorage.setItem("qs_history", JSON.stringify(h));
   renderHistory();
 }
-
 function renderHistory() {
   const h = JSON.parse(localStorage.getItem("qs_history") || "[]");
   if (!h.length) { historyPanel.classList.add("hide"); return; }
@@ -129,7 +111,6 @@ function renderHistory() {
     </div>`;
   }).join("");
 }
-
 $("clearHistory").onclick = () => {
   localStorage.removeItem("qs_history");
   renderHistory();
@@ -148,7 +129,6 @@ async function tryAutoPaste() {
 /* ── Main Process ── */
 async function processUrl(value, autoDownload = false) {
   if (!value || autoProcessing) return;
-
   if (!isSupportedUrl(value)) {
     msg("Only Instagram, Facebook, and Twitter/X links are supported.", "err");
     return;
@@ -178,20 +158,14 @@ async function processUrl(value, autoDownload = false) {
     if (!d.id)          throw new Error("Server error: no download ID.");
 
     current = d;
-
     name.textContent = d.filename || "media.mp4";
     meta.textContent = (d.contentType || "media").replace("video/","").toUpperCase() +
                        (d.size ? " • " + size(d.size) : "");
     showPreview(d);
-
     download.href = buildDlUrl(d);
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
-
     result.classList.remove("hide");
     msg("✅ Ready! Tap the button below to download.", "ok");
-
-    // Monetag interstitial show on result
-    showMoneyAd();
 
     if (autoDownload && isAutoEnabled()) {
       setTimeout(() => triggerDownload(d), 800);
@@ -224,15 +198,14 @@ function triggerDownload(d) {
   bar.style.width          = "10%";
   progressPct.textContent  = "10%";
 
-  // Show after-download ad
   if (adAfterDl) adAfterDl.classList.remove("hide");
 
   if (isIOS()) {
     window.location.href = dlUrl;
   } else {
-    const a        = document.createElement("a");
-    a.href         = dlUrl;
-    a.download     = d.filename || "QuickSave_Media.mp4";
+    const a         = document.createElement("a");
+    a.href          = dlUrl;
+    a.download      = d.filename || "QuickSave_Media.mp4";
     a.style.display = "none";
     document.body.appendChild(a);
     a.click();
@@ -256,7 +229,6 @@ function showPreview(d) {
   thumb.onclick      = () => {
     window.open(`/api/download?id=${d.id}&inline=1`, "_blank");
   };
-
   if (d.thumbnail) {
     const img         = new Image();
     img.src           = d.thumbnail;
@@ -264,10 +236,10 @@ function showPreview(d) {
     img.onload        = () => thumb.appendChild(img);
     img.onerror       = () => (thumb.innerHTML = "<span>▶</span>");
   } else {
-    const mime        = (d.contentType || "").toLowerCase();
-    thumb.innerHTML   = mime.startsWith("image/") ? "<span>◈</span>"
-      : mime.startsWith("video/")                 ? "<span>▶</span>"
-      :                                              "<span>♪</span>";
+    const mime      = (d.contentType || "").toLowerCase();
+    thumb.innerHTML = mime.startsWith("image/") ? "<span>◈</span>"
+      : mime.startsWith("video/")               ? "<span>▶</span>"
+      :                                            "<span>♪</span>";
   }
 }
 
@@ -295,7 +267,6 @@ go.onclick = () => {
   if (!value) return msg("Please paste a media URL first.", "err");
   processUrl(value, false);
 };
-
 url.onkeydown = e => {
   if (e.key === "Enter") {
     const value = url.value.trim();
@@ -306,7 +277,6 @@ url.onkeydown = e => {
 /* ── Download Button ── */
 download.addEventListener("click", e => {
   if (!current?.id) return;
-
   const dlUrl = buildDlUrl(current);
 
   saveHistory({
@@ -321,9 +291,7 @@ download.addEventListener("click", e => {
   bar.style.width          = "10%";
   progressPct.textContent  = "10%";
 
-  // Show ad on download
   if (adAfterDl) adAfterDl.classList.remove("hide");
-  showMoneyAd();
 
   if (isIOS()) {
     e.preventDefault();
@@ -338,7 +306,6 @@ download.addEventListener("click", e => {
 
   download.href = dlUrl;
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
-
   setTimeout(() => {
     bar.style.width          = "100%";
     progressPct.textContent  = "100%";
@@ -346,7 +313,7 @@ download.addEventListener("click", e => {
   }, 800);
 });
 
-/* ── Retry Button ── */
+/* ── Retry ── */
 if (retryBtn) {
   retryBtn.onclick = e => {
     e.preventDefault();
@@ -356,16 +323,10 @@ if (retryBtn) {
 
 /* ── Drag & Drop ── */
 ["dragenter","dragover"].forEach(ev =>
-  drop.addEventListener(ev, x => {
-    x.preventDefault();
-    drop.classList.add("drag");
-  })
+  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.add("drag"); })
 );
 ["dragleave","drop"].forEach(ev =>
-  drop.addEventListener(ev, x => {
-    x.preventDefault();
-    drop.classList.remove("drag");
-  })
+  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.remove("drag"); })
 );
 drop.addEventListener("drop", e => {
   const text = e.dataTransfer.getData("text/plain") ||
@@ -373,7 +334,7 @@ drop.addEventListener("drop", e => {
   if (text) processUrl(text.trim(), isAutoEnabled() && isSupportedUrl(text.trim()));
 });
 
-/* ── PWA Install (Android) ── */
+/* ── PWA Install Android ── */
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   installPrompt = e;
@@ -395,24 +356,28 @@ if (iosDismiss) {
   };
 }
 
-/* ── Service Worker ── */
+/* ── Service Worker - Monetag Push Notifications ── */
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () =>
-    navigator.serviceWorker.register("/sw.js").catch(() => {})
-  );
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" })
+      .then(reg => {
+        console.log("SW registered:", reg.scope);
+      })
+      .catch(err => {
+        console.log("SW registration failed:", err);
+      });
+  });
 }
 
 /* ── Startup ── */
 async function onStartup() {
   setAuto(isAutoEnabled());
 
-  // iOS banner
   if (isIOS() && !isInStandaloneMode() &&
       !localStorage.getItem("qs_ios_dismissed")) {
     setTimeout(() => iosInstall?.classList.remove("hidden"), 3000);
   }
 
-  // Shared URL
   const params    = new URLSearchParams(window.location.search);
   const sharedUrl = (
     params.get("url") || params.get("text") || params.get("title") || ""
@@ -424,7 +389,6 @@ async function onStartup() {
     return;
   }
 
-  // Auto clipboard
   if (isAutoEnabled()) {
     const autoPasted = await tryAutoPaste();
     if (autoPasted) {
@@ -442,9 +406,7 @@ document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible") return;
   if (autoProcessing) return;
   if (!isAutoEnabled()) return;
-
   await new Promise(r => setTimeout(r, 400));
-
   const autoPasted = await tryAutoPaste();
   if (autoPasted && autoPasted !== url.value.trim()) {
     msg("🔗 New URL detected! Processing…", "ok");
