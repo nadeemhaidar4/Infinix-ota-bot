@@ -1,15 +1,12 @@
 {
-  "name": "quicksave-ultimate",
-  "version": "3.1.0",
+  "name": "quicksave",
+  "version": "5.1.0",
   "scripts": {
-    "start": "node --max-old-space-size=450 server.js",
-    "build": "npx yt-dlp --update-to stable || true"
-  },
-  "engines": {
-    "node": ">=20"
+    "start": "node server.js",
+    "postinstall": "yt-dlp --update-to nightly 2>/dev/null || true"
   },
   "dependencies": {
-    "express": "^5.1.0",
-    "youtube-dl-exec": "^3.0.12"
+    "express": "^4.18.2",
+    "youtube-dl-exec": "^3.0.0"
   }
 }
