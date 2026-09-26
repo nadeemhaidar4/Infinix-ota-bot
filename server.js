@@ -11,7 +11,7 @@ const app = express();
 
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
-const INSPECT_TIMEOUT = 30000;
+const INSPECT_TIMEOUT = 60000;
 const DOWNLOAD_TIMEOUT = 300000;
 const MAX_REDIRECTS = 4;
 const MAX_ACTIVE_PER_IP = 3;
@@ -144,9 +144,25 @@ function isValidMediaType(ct) {
 /* ════════════════════════════════════════
    PLATFORM DETECTION
 ════════════════════════════════════════ */
+function getPlatform(urlStr) {
+  try {
+    const h = new URL(urlStr).hostname.replace(/^www\./, "");
+    if (h.includes("youtube.com") || h.includes("youtu.be")) return "youtube";
+    if (h.includes("instagram.com")) return "instagram";
+    if (h.includes("facebook.com") || h.includes("fb.watch")) return "facebook";
+    if (h.includes("tiktok.com")) return "tiktok";
+    if (h.includes("twitter.com") || h.includes("x.com")) return "twitter";
+    if (h.includes("reddit.com") || h.includes("v.redd.it")) return "reddit";
+    if (h.includes("vimeo.com")) return "vimeo";
+    if (h.includes("dailymotion.com")) return "dailymotion";
+    return null;
+  } catch { return null; }
+}
+
 function isSocialMediaUrl(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./, "");
+    // CDN URLs ko social media mat samjho
     if (
       h.includes("cdninstagram.com") || h.includes("fbcdn.net") ||
       h.includes("googlevideo.com")  || h.includes("tiktokcdn.com") ||
@@ -183,74 +199,283 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   YT-DLP EXTRACTOR (UNIVERSAL FIX)
+   YT-DLP EXTRACTOR - FULLY FIXED
 ════════════════════════════════════════ */
+
+// YouTube ke liye clean URL banao
+function cleanYouTubeUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    // youtu.be short links
+    if (u.hostname.includes("youtu.be")) {
+      const videoId = u.pathname.slice(1).split("/")[0];
+      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+    }
+    // youtube.com/shorts/ID
+    if (u.pathname.startsWith("/shorts/")) {
+      const videoId = u.pathname.split("/shorts/")[1].split("/")[0];
+      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+    }
+    // Sirf v parameter rakhna hai, baaki hata do
+    if (u.hostname.includes("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v) return `https://www.youtube.com/watch?v=${v}`;
+    }
+  } catch {}
+  return rawUrl;
+}
+
 async function extractDirectVideoUrl(pageUrl) {
   console.log("[extract] Starting for:", pageUrl.slice(0, 80));
-  try {
-    // 1. URL Cleanup: Remove tracking parameters (like ?si= in YouTube) which break extraction
-    let cleanUrl = pageUrl;
-    try {
-      if (cleanUrl.includes("youtube.com") || cleanUrl.includes("youtu.be")) {
-        const u = new URL(cleanUrl);
-        u.searchParams.delete("si");
-        cleanUrl = u.toString();
-      }
-    } catch (e) {}
+  
+  const platform = getPlatform(pageUrl);
+  console.log("[extract] Platform detected:", platform);
 
-    const isIG = cleanUrl.includes("instagram.com");
-
-    const options = {
-      dumpSingleJson:      true,
-      noCheckCertificates: true,
-      noWarnings:          true,
-      noPlaylist:          true, // Crucial for YouTube to process only 1 video
-      format:              "best" // Universally ensures one file containing both audio & video
-    };
-
-    // Instagram specific headers to avoid bot detection
-    if (isIG) {
-      options.addHeader = [
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language: en-US,en;q=0.9"
-      ];
-    }
-
-    const output = await youtubedl(cleanUrl, options);
-
-    if (!output) throw new Error("No output from yt-dlp.");
-
-    let directUrl = output.url;
-    let headers   = { ...(output.http_headers || {}) };
-    delete headers["Host"]; delete headers["host"];
-
-    // Universal Fallback if direct output.url is missing
-    if (!directUrl && output.formats?.length) {
-      const fmt = output.formats.reverse().find(f => f.url && f.vcodec !== 'none' && f.acodec !== 'none') 
-                  || output.formats.filter(f => f.url).pop();
-      if (fmt) {
-        directUrl = fmt.url;
-        headers   = { ...(fmt.http_headers || {}) };
-        delete headers["Host"]; delete headers["host"];
-      }
-    }
-
-    if (!directUrl) throw new Error("Could not find stream URL in yt-dlp output.");
-
-    let thumbnail = output.thumbnail || null;
-    
-    console.log("[extract] Success:", directUrl.slice(0, 80));
-    return {
-      url:    directUrl,
-      title:  output.title || output.id || "Video",
-      thumbnail: thumbnail,
-      headers
-    };
-  } catch (e) {
-    console.error("[extract] Error:", e.message);
-    throw new Error("Unable to extract video. It might be private, age-restricted, or unsupported.");
+  // Platform ke hisab se URL clean karo
+  let cleanUrl = pageUrl;
+  if (platform === "youtube") {
+    cleanUrl = cleanYouTubeUrl(pageUrl);
+    console.log("[extract] Clean YouTube URL:", cleanUrl);
   }
+
+  // Strategies in order of preference
+  const strategies = getStrategiesForPlatform(platform, cleanUrl);
+  
+  let lastError = null;
+  
+  for (let i = 0; i < strategies.length; i++) {
+    const strategy = strategies[i];
+    console.log(`[extract] Trying strategy ${i + 1}/${strategies.length}: ${strategy.name}`);
+    
+    try {
+      const result = await tryExtraction(cleanUrl, strategy.options);
+      if (result) {
+        console.log("[extract] Success with strategy:", strategy.name);
+        return result;
+      }
+    } catch (e) {
+      lastError = e;
+      console.log(`[extract] Strategy ${strategy.name} failed:`, e.message.slice(0, 100));
+    }
+  }
+  
+  throw new Error(
+    platform === "youtube" 
+      ? "YouTube video download nahi ho pa raha. Bot protection active hai. Thodi der baad try karein."
+      : `Video extract nahi ho pa raha. Video private, age-restricted ya unsupported ho sakta hai. (${lastError?.message?.slice(0, 80) || 'Unknown error'})`
+  );
+}
+
+function getStrategiesForPlatform(platform, url) {
+  const commonHeaders = [
+    `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`,
+    `Accept-Language: en-US,en;q=0.9`,
+    `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`
+  ];
+
+  if (platform === "youtube") {
+    return [
+      {
+        name: "YouTube-Android",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best[ext=mp4]/best",
+          extractor_args: "youtube:player_client=android",
+          addHeader: commonHeaders
+        }
+      },
+      {
+        name: "YouTube-iOS",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best[ext=mp4]/best",
+          extractor_args: "youtube:player_client=ios",
+          addHeader: commonHeaders
+        }
+      },
+      {
+        name: "YouTube-Web",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best[ext=mp4][height<=720]/best[ext=mp4]/best",
+          addHeader: commonHeaders
+        }
+      },
+      {
+        name: "YouTube-MobileWeb",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best",
+          extractor_args: "youtube:player_client=mweb",
+          addHeader: [
+            `User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1`,
+            `Accept-Language: en-US,en;q=0.9`
+          ]
+        }
+      }
+    ];
+  }
+
+  if (platform === "instagram") {
+    return [
+      {
+        name: "Instagram-Main",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best",
+          addHeader: [
+            ...commonHeaders,
+            `Referer: https://www.instagram.com/`
+          ]
+        }
+      },
+      {
+        name: "Instagram-Mobile",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best",
+          addHeader: [
+            `User-Agent: Instagram 219.0.0.12.117 Android (30/11; 420dpi; 1080x2154; samsung; SM-G991B; o1s; exynos2100)`,
+            `Accept-Language: en-US`
+          ]
+        }
+      }
+    ];
+  }
+
+  if (platform === "tiktok") {
+    return [
+      {
+        name: "TikTok-Main",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best",
+          addHeader: commonHeaders
+        }
+      }
+    ];
+  }
+
+  if (platform === "facebook") {
+    return [
+      {
+        name: "Facebook-Main",
+        options: {
+          dumpSingleJson: true,
+          noCheckCertificates: true,
+          noWarnings: true,
+          noPlaylist: true,
+          format: "best",
+          addHeader: commonHeaders
+        }
+      }
+    ];
+  }
+
+  // Default strategy for other platforms
+  return [
+    {
+      name: "Generic-Best",
+      options: {
+        dumpSingleJson: true,
+        noCheckCertificates: true,
+        noWarnings: true,
+        noPlaylist: true,
+        format: "best[ext=mp4]/best",
+        addHeader: commonHeaders
+      }
+    },
+    {
+      name: "Generic-Fallback",
+      options: {
+        dumpSingleJson: true,
+        noCheckCertificates: true,
+        noWarnings: true,
+        format: "best",
+        addHeader: commonHeaders
+      }
+    }
+  ];
+}
+
+async function tryExtraction(url, options) {
+  const output = await youtubedl(url, options);
+  
+  if (!output) throw new Error("No output from yt-dlp");
+  
+  let directUrl = null;
+  let headers = {};
+  let thumbnail = output.thumbnail || null;
+  let title = output.title || output.id || "Video";
+
+  // Direct URL check
+  if (output.url && output.url.startsWith("http")) {
+    directUrl = output.url;
+    headers = { ...(output.http_headers || {}) };
+  }
+
+  // Formats se URL dhundo agar direct nahi mila
+  if (!directUrl && output.formats && output.formats.length > 0) {
+    // Pehle aise format dhundo jisme video aur audio dono ho
+    const formats = output.formats.filter(f => f.url && f.url.startsWith("http"));
+    
+    // Best combined format
+    const combined = formats
+      .filter(f => f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none")
+      .sort((a, b) => (b.filesize || b.tbr || 0) - (a.filesize || a.tbr || 0));
+    
+    if (combined.length > 0) {
+      directUrl = combined[0].url;
+      headers = { ...(combined[0].http_headers || {}) };
+    } else {
+      // Koi bhi URL le lo
+      const anyFormat = formats.sort((a, b) => (b.filesize || b.tbr || 0) - (a.filesize || a.tbr || 0));
+      if (anyFormat.length > 0) {
+        directUrl = anyFormat[0].url;
+        headers = { ...(anyFormat[0].http_headers || {}) };
+      }
+    }
+  }
+
+  // Requested formats check
+  if (!directUrl && output.requested_formats && output.requested_formats.length > 0) {
+    const rf = output.requested_formats.find(f => f.url);
+    if (rf) {
+      directUrl = rf.url;
+      headers = { ...(rf.http_headers || {}) };
+    }
+  }
+
+  if (!directUrl) throw new Error("No valid stream URL found in output");
+
+  // Host header hata do (conflicts create karta hai)
+  delete headers["Host"];
+  delete headers["host"];
+
+  console.log("[extract] Direct URL found:", directUrl.slice(0, 80));
+  
+  return { url: directUrl, title, thumbnail, headers };
 }
 
 /* ════════════════════════════════════════
@@ -341,8 +566,11 @@ async function streamToResponse(response, res, controller, startTime) {
   }
 }
 
+/* ════════════════════════════════════════
+   ROUTES
+════════════════════════════════════════ */
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "QuickSave", version: "4.7" })
+  res.json({ ok: true, service: "QuickSave", version: "5.0" })
 );
 
 app.get("/share", (req, res) => {
@@ -412,6 +640,11 @@ app.post("/api/inspect", async (req, res) => {
         try { await response.body?.cancel(); } catch {}
       }
 
+      // Agar content type application/octet-stream hai toh video/mp4 assume karo
+      if (contentType === "application/octet-stream" && extractedTitle) {
+        contentType = "video/mp4";
+      }
+
       if (!response.ok)
         return res.status(400).json({ ok: false, type: "error",
           message: `Media server returned HTTP ${response.status}.` });
@@ -432,13 +665,13 @@ app.post("/api/inspect", async (req, res) => {
         type:        "media",
         id:          downloadId,
         downloadUrl: `/api/download?id=${downloadId}`,
-        directUrl:   targetUrl, 
+        directUrl:   targetUrl,
         url:         targetUrl,
         originalUrl: url.toString(),
         contentType: contentType || "video/mp4",
         size:        contentLength || null,
         filename,
-        thumbnail:   thumbnail 
+        thumbnail:   thumbnail
       });
 
     } finally { clearTimeout(timer); }
@@ -512,6 +745,9 @@ app.get("/api/download", async (req, res) => {
     try {
       let response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
       let contentType = getRawContentType(response);
+      
+      // application/octet-stream ko valid maano
+      if (contentType === "application/octet-stream") contentType = "video/mp4";
 
       if (!response.ok || !isValidMediaType(contentType)) {
         console.log("[dl] CDN bad:", response.status, contentType);
@@ -523,6 +759,7 @@ app.get("/api/download", async (req, res) => {
             targetUrl = c.url; customHeaders = c.headers || {}; extractedTitle = fresh.title;
             response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
             contentType = getRawContentType(response);
+            if (contentType === "application/octet-stream") contentType = "video/mp4";
           } catch {
             return res.status(502).json({ ok: false,
               message: "Media expired. Please tap 'Get media' again." });
@@ -580,7 +817,7 @@ app.use((err, _req, res, next) => {
    START
 ════════════════════════════════════════ */
 const server = app.listen(PORT, "0.0.0.0", () =>
-  console.log(`QuickSave v4.7 running on port ${PORT}`)
+  console.log(`QuickSave v5.0 running on port ${PORT}`)
 );
 
 function shutdown(sig) {
