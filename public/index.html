@@ -4,10 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080b16">
-
-  <!-- Monetag Verification -->
   <meta name="monetag" content="cc536f6250a6995ca1149160b2612123">
-
   <meta name="description" content="Download Instagram Reels, Facebook videos and Twitter clips free. Fast, easy, no signup required.">
   <meta name="keywords" content="instagram video downloader, facebook video download, twitter video save, reels downloader free">
   <meta name="robots" content="index, follow">
@@ -18,7 +15,6 @@
   <meta property="og:description" content="Download Instagram Reels, Facebook videos, Twitter clips for free. No signup needed.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="/icon-192.png">
-
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg">
   <link rel="apple-touch-icon" href="/icon-192.png">
@@ -26,26 +22,13 @@
   <link rel="stylesheet" href="/styles.css">
 
   <!-- ══════════════════════════════════════
-       MONETAG ADS - ALL 3 ZONES
+       MONETAG - MULTITAG (All-in-one)
+       Browser + PWA dono mein kaam karega
   ══════════════════════════════════════ -->
-
-  <!-- 1. Push Notifications -->
-  <script src="https://5gvci.com/act/files/tag.min.js?z=11897090" data-cfasync="false" async></script>
-
-  <!-- 2. In-Page Push -->
-  <script>
-    (function(s){
-      s.dataset.zone='11897091';
-      s.src='https://nap5k.com/tag.min.js';
-    })([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))
-  </script>
-
-  <!-- 3. OnClick Popunder -->
-  <script>
-    (function(s){
-      s.dataset.zone='11897089';
-      s.src='https://al5sm.com/tag.min.js';
-    })([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))
+  <script src="https://quge5.com/88/tag.min.js"
+          data-zone="287137"
+          async
+          data-cfasync="false">
   </script>
 
 </head>
@@ -62,6 +45,23 @@
       <span>Tap <b>Share</b> ⎋ then <b>"Add to Home Screen"</b></span>
     </div>
     <button id="iosDismiss" class="ios-dismiss">✕</button>
+  </div>
+</div>
+
+<!-- Interstitial Ad - PWA ke liye -->
+<div id="interstitialAd" class="interstitial-overlay hide">
+  <div class="interstitial-box">
+    <div class="interstitial-header">
+      <span class="ad-label">Advertisement</span>
+      <button id="closeInterstitial" class="close-btn">
+        Skip <span id="adTimer">5</span>s
+      </button>
+    </div>
+    <div class="interstitial-content">
+      <p style="color:#555;font-size:13px;text-align:center;">
+        Advertisement Loading…
+      </p>
+    </div>
   </div>
 </div>
 
@@ -131,7 +131,7 @@
 
     <div class="ad-wrap hide" id="adAfterDl">
       <span class="ad-label">Advertisement</span>
-      <div class="ad-rect"></div>
+      <div class="ad-slot"></div>
     </div>
 
     <section id="historyPanel" class="history hide">
@@ -163,7 +163,7 @@
           <div class="step-num">3</div>
           <div class="step-text">
             <strong>Download free</strong>
-            <span>Click "Download Video Free" — saved to your device instantly</span>
+            <span>Click "Download Video Free" — saved instantly</span>
           </div>
         </div>
       </div>
@@ -195,24 +195,24 @@
       </details>
       <details>
         <summary>Can I download Instagram Reels without watermark?</summary>
-        <p>Yes! All videos downloaded via QuickSave are watermark-free in original quality.</p>
+        <p>Yes! All videos are watermark-free in original quality.</p>
       </details>
       <details>
         <summary>How to download Facebook videos?</summary>
-        <p>Copy the Facebook video URL, paste it in the box above, and click "Get media". That's it!</p>
+        <p>Copy the Facebook video URL, paste it above, and click "Get media". Done!</p>
       </details>
       <details>
         <summary>Does it work on iPhone and Android?</summary>
-        <p>Yes! QuickSave works on all devices — iPhone, Android, and desktop browsers.</p>
+        <p>Yes! Works on all devices — iPhone, Android, and desktop browsers.</p>
       </details>
       <details>
         <summary>Are my downloads private?</summary>
-        <p>Yes. We don't store any URLs or videos. Everything is processed temporarily and deleted immediately.</p>
+        <p>Yes. We don't store any URLs or videos. Everything is deleted immediately.</p>
       </details>
     </section>
 
     <div class="notice">
-      <b>⚠ Use responsibly.</b> Only download media you own or have explicit permission to save. Respect copyright laws.
+      <b>⚠ Use responsibly.</b> Only download media you own or have permission to save.
     </div>
   </section>
 
