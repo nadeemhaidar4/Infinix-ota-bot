@@ -1,3 +1,6 @@
+/* QuickSave app.js v3.0 */
+console.log("QuickSave app.js v3.0 loaded");
+
 const $ = (id) => document.getElementById(id);
 const url = $("url"),
   paste = $("paste"),
@@ -20,7 +23,6 @@ const url = $("url"),
 let current = null,
   installPrompt = null;
 
-/* ── helpers ── */
 function msg(t, c = "") {
   status.textContent = t;
   status.className = "status " + c;
@@ -41,21 +43,20 @@ function escapeHtml(s) {
   );
 }
 
-/* ── download URL builder ──
-   Server returns: { id, downloadUrl, url, contentType, filename, size }
-   We ALWAYS use id-based URL to avoid CDN URL encoding issues            */
+/* ── ONLY ID-based download URLs ── */
 function buildDlUrl(d, inline = false) {
-  let base;
-  if (d.id)          base = `/api/download?id=${encodeURIComponent(d.id)}`;
-  else if (d.downloadUrl) base = d.downloadUrl;
-  else               base = "#";          // fallback – should never happen
+  if (!d || !d.id) {
+    console.error("buildDlUrl: no id in response", d);
+    return "#";
+  }
+  const base = `/api/download?id=${encodeURIComponent(d.id)}`;
   return inline ? base + "&inline=1" : base;
 }
 
 /* ── history ── */
 function saveHistory(item) {
   let h = JSON.parse(localStorage.getItem("qs_history") || "[]");
-  h = [item, ...h.filter(x => x.id ? x.id !== item.id : x.url !== item.url)].slice(0, 8);
+  h = [item, ...h.filter(x => x.id !== item.id)].slice(0, 8);
   localStorage.setItem("qs_history", JSON.stringify(h));
   renderHistory();
 }
@@ -65,13 +66,13 @@ function renderHistory() {
   if (!h.length) { historyPanel.classList.add("hide"); return; }
   historyPanel.classList.remove("hide");
   history.innerHTML = h.map(x => {
-    const href = escapeHtml(
-      x.id ? `/api/download?id=${x.id}` : (x.downloadUrl || "#")
-    );
+    const href = x.id
+      ? escapeHtml(`/api/download?id=${x.id}`)
+      : "#";
     return `<div class="historyrow">
       <div>
-        <b>${escapeHtml(x.name)}</b>
-        <small>${escapeHtml(x.type)} • ${new Date(x.time).toLocaleString()}</small>
+        <b>${escapeHtml(x.name || "media")}</b>
+        <small>${escapeHtml(x.type || "media")} • ${new Date(x.time).toLocaleString()}</small>
       </div>
       <a href="${href}">Download</a>
     </div>`;
@@ -83,14 +84,14 @@ $("clearHistory").onclick = () => {
   renderHistory();
 };
 
-/* ── paste button ── */
+/* ── paste ── */
 paste.onclick = async () => {
   try {
     url.value = (await navigator.clipboard.readText()).trim();
     paste.textContent = "Pasted ✓";
     setTimeout(() => (paste.textContent = "Paste"), 1200);
   } catch {
-    msg("Clipboard permission unavailable. Paste manually.", "err");
+    msg("Clipboard unavailable. Paste manually.", "err");
     url.focus();
   }
 };
@@ -112,33 +113,24 @@ url.onkeydown = e => { if (e.key === "Enter") go.click(); };
 function showPreview(d) {
   thumb.innerHTML = "";
   const mime = (d.contentType || "").toLowerCase();
-  const previewUrl = buildDlUrl(d, true);   // inline=1 so browser streams it
 
   if (mime.startsWith("image/")) {
+    const previewUrl = buildDlUrl(d, true);
     const img = new Image();
     img.src = previewUrl;
     img.alt = d.filename || "preview";
-    img.onload  = () => thumb.appendChild(img);
+    img.onload = () => thumb.appendChild(img);
     img.onerror = () => (thumb.innerHTML = "<span>◈</span>");
-
   } else if (mime.startsWith("video/")) {
-    const v = document.createElement("video");
-    v.src        = previewUrl;
-    v.muted      = true;
-    v.playsInline = true;
-    v.preload    = "metadata";
-    v.addEventListener("loadedmetadata", () => {
-      try { v.currentTime = 0.5; } catch {}
-    });
-    v.onerror = () => (thumb.innerHTML = "<span>▶</span>");
-    thumb.appendChild(v);
-
+    // Video preview ke liye music note icon dikhao
+    // (video tag CDN auth issues cause karta hai)
+    thumb.innerHTML = "<span>▶</span>";
   } else {
     thumb.innerHTML = "<span>♪</span>";
   }
 }
 
-/* ── main inspect flow ── */
+/* ── MAIN: Get media ── */
 go.onclick = async () => {
   const value = url.value.trim();
   if (!value) return msg("Paste a media URL first.", "err");
@@ -147,7 +139,6 @@ go.onclick = async () => {
   result.classList.add("hide");
   progress.classList.add("hide");
 
-  // safely update button text (first text node)
   const btnText = [...go.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
   if (btnText) btnText.textContent = "Checking… ";
   msg("Checking the link…");
@@ -160,24 +151,29 @@ go.onclick = async () => {
     });
     const d = await r.json();
 
-    if (!r.ok || !d.ok) throw new Error(d.message || "This link could not be processed.");
+    console.log("Inspect response:", JSON.stringify({
+      ok: d.ok,
+      id: d.id,
+      downloadUrl: d.downloadUrl,
+      contentType: d.contentType,
+      filename: d.filename,
+      size: d.size
+    }));
 
-    // ── CRITICAL CHECK ──
-    if (!d.id && !d.downloadUrl) {
-      throw new Error("Server error: no download ID returned. Please redeploy latest server.js.");
-    }
+    if (!r.ok || !d.ok) throw new Error(d.message || "This link could not be processed.");
+    if (!d.id) throw new Error("Server error: no download ID. Please redeploy latest server.js");
 
     current = d;
 
-    /* build final download URL using short id */
     const dlUrl = buildDlUrl(d, false);
+    console.log("Download URL will be:", dlUrl);
 
     name.textContent = d.filename || "media.mp4";
     meta.textContent = (d.contentType || "media") + (d.size ? " • " + size(d.size) : "");
 
     showPreview(d);
 
-    /* set anchor — this is what Android Download Manager reads */
+    /* ── Set anchor href ── */
     download.href = dlUrl;
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
 
@@ -185,43 +181,50 @@ go.onclick = async () => {
     msg("Media is ready. Tap Download file.", "ok");
 
   } catch (e) {
+    console.error("Inspect failed:", e);
     msg(e.message || "Something went wrong.", "err");
   } finally {
     go.disabled = false;
-    if (btnText) btnText.textContent = "Get media ";
+    const btnText2 = [...go.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+    if (btnText2) btnText2.textContent = "Get media ";
   }
 };
 
-/* ── download button click ── */
-download.addEventListener("click", () => {
-  if (!current) return;
+/* ── Download button click ── */
+download.addEventListener("click", (e) => {
+  if (!current || !current.id) {
+    e.preventDefault();
+    msg("Please tap 'Get media' first.", "err");
+    return;
+  }
 
   const dlUrl = buildDlUrl(current, false);
-  download.href = dlUrl;   // re-confirm before navigation
+  console.log("Download clicked, URL:", dlUrl);
+
+  // Re-confirm href (prevent any stale value)
+  download.href = dlUrl;
+  download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
 
   saveHistory({
-    id:          current.id,
-    downloadUrl: dlUrl,
-    url:         current.originalUrl || current.url || "",
-    name:        current.filename    || "media.mp4",
-    type:        current.contentType || "media",
-    time:        Date.now()
+    id:   current.id,
+    name: current.filename || "media.mp4",
+    type: current.contentType || "media",
+    time: Date.now()
   });
 
-  /* progress bar UX */
   progress.classList.remove("hide");
   progressText.textContent = "Starting download…";
-  bar.style.width   = "10%";
+  bar.style.width = "10%";
   progressPct.textContent = "10%";
 
   setTimeout(() => {
-    bar.style.width         = "100%";
+    bar.style.width = "100%";
     progressPct.textContent = "Ready";
     progressText.textContent = "Download started — check your Downloads app.";
   }, 500);
 });
 
-/* ── PWA install ── */
+/* ── PWA ── */
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   installPrompt = e;
@@ -235,7 +238,7 @@ install.onclick = async () => {
   install.classList.add("hidden");
 };
 
-/* ── service worker ── */
+/* ── SW ── */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () =>
     navigator.serviceWorker.register("/sw.js").catch(() => {})
