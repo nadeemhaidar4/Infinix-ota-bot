@@ -1,37 +1,53 @@
-/* QuickSave app.js v3.0 */
-console.log("QuickSave app.js v3.0 loaded");
+/* QuickSave app.js v4.0 */
+console.log("QuickSave app.js v4.0 loaded");
 
-const $ = (id) => document.getElementById(id);
-const url = $("url"),
-  paste = $("paste"),
-  go = $("go"),
-  drop = $("drop"),
-  status = $("status"),
-  result = $("result"),
-  name = $("name"),
-  meta = $("meta"),
-  download = $("download"),
-  thumb = $("thumb"),
-  progress = $("progress"),
-  bar = $("bar"),
-  progressText = $("progressText"),
-  progressPct = $("progressPct"),
-  historyPanel = $("historyPanel"),
-  history = $("history"),
-  install = $("install");
+const $ = id => document.getElementById(id);
+const url       = $("url"),
+      paste     = $("paste"),
+      go        = $("go"),
+      drop      = $("drop"),
+      status    = $("status"),
+      result    = $("result"),
+      name      = $("name"),
+      meta      = $("meta"),
+      download  = $("download"),
+      thumb     = $("thumb"),
+      progress  = $("progress"),
+      bar       = $("bar"),
+      progressText = $("progressText"),
+      progressPct  = $("progressPct"),
+      historyPanel = $("historyPanel"),
+      history      = $("history"),
+      install      = $("install"),
+      autoToggle   = $("autoToggle"),
+      autoLabel    = $("autoLabel");
 
-let current = null,
-  installPrompt = null;
+let current      = null;
+let installPrompt = null;
+let autoProcessing = false;
 
+/* ── Auto setting ── */
+function isAutoEnabled() {
+  return localStorage.getItem("qs_auto") !== "false";
+}
+function setAuto(val) {
+  localStorage.setItem("qs_auto", val ? "true" : "false");
+  autoToggle.checked = val;
+  autoLabel.textContent = val ? "Auto ON" : "Auto OFF";
+}
+
+autoToggle.addEventListener("change", () => setAuto(autoToggle.checked));
+
+/* ── helpers ── */
 function msg(t, c = "") {
   status.textContent = t;
-  status.className = "status " + c;
+  status.className   = "status " + c;
   status.classList.toggle("hide", !t);
 }
 
 function size(n) {
   if (!n) return "Size unavailable";
-  const u = ["B", "KB", "MB", "GB"];
+  const u = ["B","KB","MB","GB"];
   let i = 0;
   while (n >= 1024 && i < 3) { n /= 1024; i++; }
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
@@ -39,18 +55,25 @@ function size(n) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g,
-    (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[m])
+    m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m])
   );
 }
 
-/* ── ONLY ID-based download URLs ── */
 function buildDlUrl(d, inline = false) {
-  if (!d || !d.id) {
-    console.error("buildDlUrl: no id in response", d);
-    return "#";
-  }
+  if (!d || !d.id) return "#";
   const base = `/api/download?id=${encodeURIComponent(d.id)}`;
   return inline ? base + "&inline=1" : base;
+}
+
+function isSupportedUrl(u) {
+  try {
+    const h = new URL(u).hostname.replace(/^www\./, "");
+    return [
+      "instagram.com","facebook.com","fb.watch",
+      "tiktok.com","youtube.com","youtu.be",
+      "twitter.com","x.com"
+    ].some(p => h.includes(p));
+  } catch { return false; }
 }
 
 /* ── history ── */
@@ -66,9 +89,7 @@ function renderHistory() {
   if (!h.length) { historyPanel.classList.add("hide"); return; }
   historyPanel.classList.remove("hide");
   history.innerHTML = h.map(x => {
-    const href = x.id
-      ? escapeHtml(`/api/download?id=${x.id}`)
-      : "#";
+    const href = x.id ? escapeHtml(`/api/download?id=${x.id}`) : "#";
     return `<div class="historyrow">
       <div>
         <b>${escapeHtml(x.name || "media")}</b>
@@ -84,57 +105,24 @@ $("clearHistory").onclick = () => {
   renderHistory();
 };
 
-/* ── paste ── */
-paste.onclick = async () => {
+/* ── Auto clipboard paste ── */
+async function tryAutoPaste() {
+  if (!isAutoEnabled()) return null;
   try {
-    url.value = (await navigator.clipboard.readText()).trim();
-    paste.textContent = "Pasted ✓";
-    setTimeout(() => (paste.textContent = "Paste"), 1200);
-  } catch {
-    msg("Clipboard unavailable. Paste manually.", "err");
-    url.focus();
-  }
-};
-
-/* ── drag-drop ── */
-["dragenter", "dragover"].forEach(e =>
-  drop.addEventListener(e, x => { x.preventDefault(); drop.classList.add("drag"); })
-);
-["dragleave", "drop"].forEach(e =>
-  drop.addEventListener(e, x => { x.preventDefault(); drop.classList.remove("drag"); })
-);
-drop.addEventListener("drop", e => {
-  const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/uri-list");
-  if (text) { url.value = text.trim(); go.click(); }
-});
-url.onkeydown = e => { if (e.key === "Enter") go.click(); };
-
-/* ── preview ── */
-function showPreview(d) {
-  thumb.innerHTML = "";
-  const mime = (d.contentType || "").toLowerCase();
-
-  if (mime.startsWith("image/")) {
-    const previewUrl = buildDlUrl(d, true);
-    const img = new Image();
-    img.src = previewUrl;
-    img.alt = d.filename || "preview";
-    img.onload = () => thumb.appendChild(img);
-    img.onerror = () => (thumb.innerHTML = "<span>◈</span>");
-  } else if (mime.startsWith("video/")) {
-    // Video preview ke liye music note icon dikhao
-    // (video tag CDN auth issues cause karta hai)
-    thumb.innerHTML = "<span>▶</span>";
-  } else {
-    thumb.innerHTML = "<span>♪</span>";
-  }
+    const text = (await navigator.clipboard.readText()).trim();
+    if (text && isSupportedUrl(text)) {
+      return text;
+    }
+  } catch {}
+  return null;
 }
 
-/* ── MAIN: Get media ── */
-go.onclick = async () => {
-  const value = url.value.trim();
-  if (!value) return msg("Paste a media URL first.", "err");
+/* ── Main process function ── */
+async function processUrl(value, autoDownload = false) {
+  if (!value || autoProcessing) return;
+  autoProcessing = true;
 
+  url.value = value;
   go.disabled = true;
   result.classList.add("hide");
   progress.classList.add("hide");
@@ -151,57 +139,121 @@ go.onclick = async () => {
     });
     const d = await r.json();
 
-    console.log("Inspect response:", JSON.stringify({
-      ok: d.ok,
-      id: d.id,
-      downloadUrl: d.downloadUrl,
-      contentType: d.contentType,
-      filename: d.filename,
-      size: d.size
-    }));
+    console.log("Inspect:", { ok: d.ok, id: d.id, filename: d.filename });
 
-    if (!r.ok || !d.ok) throw new Error(d.message || "This link could not be processed.");
-    if (!d.id) throw new Error("Server error: no download ID. Please redeploy latest server.js");
+    if (!r.ok || !d.ok) throw new Error(d.message || "Could not process link.");
+    if (!d.id) throw new Error("Server error: no download ID.");
 
     current = d;
-
     const dlUrl = buildDlUrl(d, false);
-    console.log("Download URL will be:", dlUrl);
 
     name.textContent = d.filename || "media.mp4";
     meta.textContent = (d.contentType || "media") + (d.size ? " • " + size(d.size) : "");
-
     showPreview(d);
 
-    /* ── Set anchor href ── */
     download.href = dlUrl;
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
 
     result.classList.remove("hide");
     msg("Media is ready. Tap Download file.", "ok");
 
+    // Auto download
+    if (autoDownload && isAutoEnabled()) {
+      msg("Auto-downloading…", "ok");
+      triggerDownload(d);
+    }
+
   } catch (e) {
-    console.error("Inspect failed:", e);
+    console.error("Process failed:", e);
     msg(e.message || "Something went wrong.", "err");
   } finally {
     go.disabled = false;
-    const btnText2 = [...go.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
-    if (btnText2) btnText2.textContent = "Get media ";
+    autoProcessing = false;
+    if (btnText) btnText.textContent = "Get media ";
+  }
+}
+
+function triggerDownload(d) {
+  if (!d || !d.id) return;
+  const dlUrl = buildDlUrl(d, false);
+  download.href = dlUrl;
+  download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
+
+  saveHistory({
+    id:   d.id,
+    name: d.filename || "media.mp4",
+    type: d.contentType || "media",
+    time: Date.now()
+  });
+
+  progress.classList.remove("hide");
+  progressText.textContent = "Starting download…";
+  bar.style.width   = "10%";
+  progressPct.textContent = "10%";
+
+  // Programmatic click
+  download.click();
+
+  setTimeout(() => {
+    bar.style.width = "100%";
+    progressPct.textContent = "Ready";
+    progressText.textContent = "Download started — check your Downloads app.";
+  }, 500);
+}
+
+/* ── Preview ── */
+function showPreview(d) {
+  thumb.innerHTML = "";
+  const mime = (d.contentType || "").toLowerCase();
+  if (mime.startsWith("image/")) {
+    const img = new Image();
+    img.src = buildDlUrl(d, true);
+    img.alt = d.filename || "preview";
+    img.onload  = () => thumb.appendChild(img);
+    img.onerror = () => (thumb.innerHTML = "<span>◈</span>");
+  } else if (mime.startsWith("video/")) {
+    thumb.innerHTML = "<span>▶</span>";
+  } else {
+    thumb.innerHTML = "<span>♪</span>";
+  }
+}
+
+/* ── Paste button ── */
+paste.onclick = async () => {
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (text) {
+      url.value = text;
+      paste.textContent = "Pasted ✓";
+      setTimeout(() => (paste.textContent = "Paste"), 1200);
+      if (isAutoEnabled() && isSupportedUrl(text)) {
+        processUrl(text, true);
+      }
+    }
+  } catch {
+    msg("Clipboard unavailable. Paste manually.", "err");
+    url.focus();
   }
 };
 
-/* ── Download button click ── */
-download.addEventListener("click", (e) => {
-  if (!current || !current.id) {
-    e.preventDefault();
-    msg("Please tap 'Get media' first.", "err");
-    return;
+/* ── Get media button ── */
+go.onclick = () => {
+  const value = url.value.trim();
+  if (!value) return msg("Paste a media URL first.", "err");
+  processUrl(value, false);
+};
+
+url.onkeydown = e => {
+  if (e.key === "Enter") {
+    const value = url.value.trim();
+    if (value) processUrl(value, isAutoEnabled() && isSupportedUrl(value));
   }
+};
 
+/* ── Download button ── */
+download.addEventListener("click", () => {
+  if (!current || !current.id) return;
   const dlUrl = buildDlUrl(current, false);
-  console.log("Download clicked, URL:", dlUrl);
-
-  // Re-confirm href (prevent any stale value)
   download.href = dlUrl;
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
 
@@ -224,7 +276,19 @@ download.addEventListener("click", (e) => {
   }, 500);
 });
 
-/* ── PWA ── */
+/* ── Drag drop ── */
+["dragenter","dragover"].forEach(e =>
+  drop.addEventListener(e, x => { x.preventDefault(); drop.classList.add("drag"); })
+);
+["dragleave","drop"].forEach(e =>
+  drop.addEventListener(e, x => { x.preventDefault(); drop.classList.remove("drag"); })
+);
+drop.addEventListener("drop", e => {
+  const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/uri-list");
+  if (text) processUrl(text.trim(), isAutoEnabled() && isSupportedUrl(text.trim()));
+});
+
+/* ── PWA Install ── */
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   installPrompt = e;
@@ -238,11 +302,63 @@ install.onclick = async () => {
   install.classList.add("hidden");
 };
 
-/* ── SW ── */
+/* ── Service Worker ── */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () =>
     navigator.serviceWorker.register("/sw.js").catch(() => {})
   );
 }
 
-renderHistory();
+/* ══════════════════════════════
+   STARTUP LOGIC
+   1. Share target check
+   2. Auto paste check
+   3. Visibility change (jab app focus aaye)
+══════════════════════════════ */
+async function onStartup() {
+  // Init toggle
+  setAuto(isAutoEnabled());
+
+  // 1. Share target se aaya? (/share?url=...)
+  const params = new URLSearchParams(window.location.search);
+  const sharedUrl = params.get("url") || params.get("text") || params.get("title");
+  if (sharedUrl && isSupportedUrl(sharedUrl.trim())) {
+    console.log("Shared URL detected:", sharedUrl);
+    // Clean URL from address bar
+    window.history.replaceState({}, "", "/");
+    await processUrl(sharedUrl.trim(), true); // Always auto-download on share
+    return;
+  }
+
+  // 2. Auto paste on startup
+  if (isAutoEnabled()) {
+    const autoPasted = await tryAutoPaste();
+    if (autoPasted) {
+      console.log("Auto-pasted:", autoPasted);
+      msg("URL detected! Processing…", "ok");
+      await processUrl(autoPasted, true);
+      return;
+    }
+  }
+
+  renderHistory();
+}
+
+/* ── Visibility change: jab user app pe wapas aaye ── */
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible") return;
+  if (autoProcessing) return;
+  if (!isAutoEnabled()) return;
+
+  // Thoda wait karo clipboard update hone ke liye
+  await new Promise(r => setTimeout(r, 300));
+
+  const autoPasted = await tryAutoPaste();
+  if (autoPasted && autoPasted !== url.value.trim()) {
+    console.log("New URL on focus:", autoPasted);
+    msg("New URL detected! Processing…", "ok");
+    await processUrl(autoPasted, true);
+  }
+});
+
+onStartup();
