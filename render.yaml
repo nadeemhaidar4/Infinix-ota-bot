@@ -1,13 +1,13 @@
 services:
   - type: web
     name: quicksave
-    runtime: node
-    plan: starter
-    buildCommand: npm install && npx yt-dlp --update-to stable || true
-    startCommand: node --max-old-space-size=450 server.js
-    healthCheckPath: /health
+    env: native
+    buildCommand: |
+      npm install
+      pip3 install -U yt-dlp
+    startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=450
+      - key: YTDLP_PATH
+        value: /usr/local/bin/yt-dlp
