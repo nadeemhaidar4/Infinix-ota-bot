@@ -1,9 +1,13 @@
 services:
   - type: web
-    name: quicksave-media-saver
+    name: quicksave
     runtime: node
-    plan: free
-    buildCommand: npm install
-    startCommand: npm start
-    autoDeploy: true
+    plan: starter
+    buildCommand: npm install && npx yt-dlp --update-to stable || true
+    startCommand: node --max-old-space-size=450 server.js
     healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=450
