@@ -13,7 +13,7 @@ const app = express();
 
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
-const INSPECT_TIMEOUT = 120000;
+const INSPECT_TIMEOUT = 90000;
 const DOWNLOAD_TIMEOUT = 300000;
 const MAX_REDIRECTS = 4;
 const MAX_ACTIVE_PER_IP = 3;
@@ -21,10 +21,6 @@ const RATE_WINDOW = 60 * 1000;
 const RATE_LIMIT = 20;
 const PUBLIC_DIR = path.join(__dirname, "public");
 const COOKIES_FILE = path.join(__dirname, "cookies.txt");
-
-// RapidAPI - YTStream API
-const RAPIDAPI_KEY  = process.env.RAPIDAPI_KEY || "";
-const YTSTREAM_HOST = "ytstream-download-youtube-videos.p.rapidapi.com";
 
 const rateMap         = new Map();
 const activeMap       = new Map();
@@ -53,7 +49,10 @@ function isPrivateIPv6(ip) {
 }
 async function isBlockedHost(hostname) {
   const host = hostname.toLowerCase();
-  if (host==="localhost"||host.endsWith(".localhost")||host==="local"||host==="metadata.google.internal") return true;
+  if (
+    host==="localhost"||host.endsWith(".localhost")||
+    host==="local"||host==="metadata.google.internal"
+  ) return true;
   const type = net.isIP(host);
   if (type===4) return isPrivateIPv4(host);
   if (type===6) return isPrivateIPv6(host);
@@ -69,9 +68,12 @@ async function isBlockedHost(hostname) {
 async function validateUrl(rawUrl) {
   if (!rawUrl||typeof rawUrl!=="string") throw new Error("URL is required.");
   let url;
-  try { url = new URL(rawUrl.trim()); } catch { throw new Error("Please enter a valid URL."); }
-  if (!["http:","https:"].includes(url.protocol)) throw new Error("Only HTTP and HTTPS URLs are supported.");
-  if (await isBlockedHost(url.hostname)) throw new Error("This URL cannot be accessed safely.");
+  try { url = new URL(rawUrl.trim()); }
+  catch { throw new Error("Please enter a valid URL."); }
+  if (!["http:","https:"].includes(url.protocol))
+    throw new Error("Only HTTP and HTTPS URLs are supported.");
+  if (await isBlockedHost(url.hostname))
+    throw new Error("This URL cannot be accessed safely.");
   return url;
 }
 
@@ -101,7 +103,8 @@ function releaseDownload(ip) {
 function filenameFromUrl(url, contentType="", customTitle=null) {
   const ext = contentType.includes("video") ? ".mp4"
     : contentType.includes("audio") ? ".mp3"
-    : contentType.includes("image") ? ".jpg" : ".mp4";
+    : contentType.includes("image") ? ".jpg"
+    : ".mp4";
   if (customTitle) {
     let t = customTitle.replace(/[^a-zA-Z0-9]/g,"_").replace(/_+/g,"_").slice(0,40);
     if (t.endsWith("_")) t = t.slice(0,-1);
@@ -122,30 +125,32 @@ function isValidMediaType(ct) {
 }
 
 /* ════════════════════════════════════════
-   PLATFORM
+   PLATFORM DETECTION
+   Sirf Instagram, Facebook, Twitter
 ════════════════════════════════════════ */
 function getPlatform(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./,"");
-    if (h.includes("youtube.com")||h.includes("youtu.be")) return "youtube";
-    if (h.includes("instagram.com")) return "instagram";
+    if (h.includes("instagram.com"))                    return "instagram";
     if (h.includes("facebook.com")||h.includes("fb.watch")) return "facebook";
-    if (h.includes("tiktok.com")) return "tiktok";
     if (h.includes("twitter.com")||h.includes("x.com")) return "twitter";
-    if (h.includes("reddit.com")||h.includes("v.redd.it")) return "reddit";
-    if (h.includes("vimeo.com")) return "vimeo";
     return null;
   } catch { return null; }
 }
-function isSocialMediaUrl(urlStr) {
+
+function isSupportedUrl(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./,"");
-    if (h.includes("cdninstagram.com")||h.includes("fbcdn.net")||
-        h.includes("googlevideo.com")||h.includes("tiktokcdn.com")||
-        h.includes("twimg.com")) return false;
-    return ["instagram.com","facebook.com","fb.watch","tiktok.com",
-            "youtube.com","youtu.be","twitter.com","x.com",
-            "reddit.com","vimeo.com","dailymotion.com"].some(p=>h.includes(p));
+    // CDN URLs supported nahi
+    if (
+      h.includes("cdninstagram.com")||h.includes("fbcdn.net")||
+      h.includes("twimg.com")
+    ) return false;
+    return [
+      "instagram.com",
+      "facebook.com","fb.watch",
+      "twitter.com","x.com"
+    ].some(p=>h.includes(p));
   } catch { return false; }
 }
 
@@ -153,6 +158,7 @@ function isSocialMediaUrl(urlStr) {
    CACHE
 ════════════════════════════════════════ */
 function makeDownloadId() { return crypto.randomBytes(12).toString("hex"); }
+
 function cacheExtraction(originalUrl, extractedData) {
   const downloadId = makeDownloadId();
   const payload = {...extractedData, originalUrl, downloadId, createdAt:Date.now()};
@@ -168,171 +174,7 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   URL CLEANER
-════════════════════════════════════════ */
-function cleanYouTubeUrl(rawUrl) {
-  try {
-    const u = new URL(rawUrl);
-    if (u.hostname.includes("youtu.be")) {
-      const id = u.pathname.slice(1).split(/[/?#]/)[0];
-      if (id) return `https://www.youtube.com/watch?v=${id}`;
-    }
-    if (u.pathname.startsWith("/shorts/")) {
-      const id = u.pathname.split("/shorts/")[1].split(/[/?#]/)[0];
-      if (id) return `https://www.youtube.com/watch?v=${id}`;
-    }
-    if (u.pathname.startsWith("/live/")) {
-      const id = u.pathname.split("/live/")[1].split(/[/?#]/)[0];
-      if (id) return `https://www.youtube.com/watch?v=${id}`;
-    }
-    if (u.hostname.includes("youtube.com")) {
-      const v = u.searchParams.get("v");
-      if (v) return `https://www.youtube.com/watch?v=${v}`;
-    }
-  } catch {}
-  return rawUrl;
-}
-
-function extractVideoId(ytUrl) {
-  try {
-    return new URL(ytUrl).searchParams.get("v") || null;
-  } catch { return null; }
-}
-
-/* ════════════════════════════════════════
-   YTSTREAM API - MAIN YOUTUBE METHOD
-════════════════════════════════════════ */
-async function tryYTStreamAPI(videoId) {
-  if (!RAPIDAPI_KEY) throw new Error("No RapidAPI key configured");
-
-  console.log("[ytstream] Fetching video ID:", videoId);
-
-  const url = `https://${YTSTREAM_HOST}/dl?id=${videoId}`;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      "X-RapidAPI-Key":  RAPIDAPI_KEY,
-      "X-RapidAPI-Host": YTSTREAM_HOST
-    },
-    signal: AbortSignal.timeout(30000)
-  });
-
-  const responseText = await res.text();
-  console.log("[ytstream] Status:", res.status);
-  console.log("[ytstream] Response preview:", responseText.slice(0, 300));
-
-  if (!res.ok) {
-    throw new Error(`YTStream API error: HTTP ${res.status} - ${responseText.slice(0,100)}`);
-  }
-
-  let data;
-  try {
-    data = JSON.parse(responseText);
-  } catch {
-    throw new Error("YTStream API returned invalid JSON");
-  }
-
-  console.log("[ytstream] Response keys:", Object.keys(data || {}));
-
-  // Title aur thumbnail
-  const title     = data.title     || data.vid_title || "YouTube Video";
-  const thumbnail = data.thumbnail || data.thumb      || null;
-
-  // === URL dhundne ke saare tarike ===
-
-  // 1. data.formats object (most common)
-  if (data.formats && typeof data.formats === "object") {
-    const formats = data.formats;
-    console.log("[ytstream] Format keys:", Object.keys(formats));
-
-    // Quality preference: 720p > 480p > 360p > any
-    const qualityPrefs = ["22", "18", "137", "136", "135", "134", "133"];
-
-    for (const q of qualityPrefs) {
-      if (formats[q]) {
-        const fmt = formats[q];
-        const fmtUrl = fmt.url || fmt.download_url || fmt.stream_url;
-        if (fmtUrl && fmtUrl.startsWith("http")) {
-          console.log(`[ytstream] Using format ${q}:`, fmtUrl.slice(0,60));
-          return { url: fmtUrl, title, thumbnail, headers: {} };
-        }
-      }
-    }
-
-    // Koi bhi mp4 format lo
-    for (const [key, fmt] of Object.entries(formats)) {
-      if (!fmt) continue;
-      const fmtUrl = fmt.url || fmt.download_url || fmt.stream_url;
-      const mimeType = (fmt.mimeType || fmt.type || "").toLowerCase();
-      if (fmtUrl && fmtUrl.startsWith("http") && (mimeType.includes("video") || mimeType === "")) {
-        console.log(`[ytstream] Using any format ${key}:`, fmtUrl.slice(0,60));
-        return { url: fmtUrl, title, thumbnail, headers: {} };
-      }
-    }
-  }
-
-  // 2. data.url direct
-  if (data.url && data.url.startsWith("http")) {
-    console.log("[ytstream] Using direct url");
-    return { url: data.url, title, thumbnail, headers: {} };
-  }
-
-  // 3. data.link
-  if (data.link && data.link.startsWith("http")) {
-    console.log("[ytstream] Using link");
-    return { url: data.link, title, thumbnail, headers: {} };
-  }
-
-  // 4. data.download_url
-  if (data.download_url && data.download_url.startsWith("http")) {
-    console.log("[ytstream] Using download_url");
-    return { url: data.download_url, title, thumbnail, headers: {} };
-  }
-
-  // 5. Nested links array
-  if (Array.isArray(data.links)) {
-    const mp4Link = data.links.find(l =>
-      l.url && (l.type||"").includes("mp4") || (l.ext||"")==="mp4"
-    ) || data.links.find(l => l.url);
-    if (mp4Link?.url) {
-      console.log("[ytstream] Using links array");
-      return { url: mp4Link.url, title, thumbnail, headers: {} };
-    }
-  }
-
-  // 6. Deep search karo response mein
-  const deepUrl = findUrlInObject(data);
-  if (deepUrl) {
-    console.log("[ytstream] Found URL via deep search:", deepUrl.slice(0,60));
-    return { url: deepUrl, title, thumbnail, headers: {} };
-  }
-
-  console.log("[ytstream] Full response:", JSON.stringify(data).slice(0, 500));
-  throw new Error("No download URL found in YTStream response");
-}
-
-// Response mein kisi bhi jagah URL dhundo
-function findUrlInObject(obj, depth = 0) {
-  if (depth > 5 || !obj) return null;
-  if (typeof obj === "string" && obj.startsWith("https://") && obj.includes(".")) return obj;
-
-  if (typeof obj === "object") {
-    for (const key of ["url", "download_url", "stream_url", "link", "src", "href", "file"]) {
-      if (obj[key] && typeof obj[key] === "string" && obj[key].startsWith("http")) {
-        return obj[key];
-      }
-    }
-    for (const val of Object.values(obj)) {
-      const found = findUrlInObject(val, depth + 1);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/* ════════════════════════════════════════
-   yt-dlp BINARY + RUNNER (Fallback)
+   yt-dlp BINARY
 ════════════════════════════════════════ */
 function getYtdlpBinary() {
   const locations = [
@@ -346,14 +188,17 @@ function getYtdlpBinary() {
   }
   try {
     const pkg = require("youtube-dl-exec");
-    const binPath = pkg.path || pkg.binaryPath;
-    if (binPath && fs.existsSync(binPath)) return binPath;
+    const binPath = pkg.path||pkg.binaryPath;
+    if (binPath&&fs.existsSync(binPath)) return binPath;
   } catch {}
   return "yt-dlp";
 }
 
 const YTDLP_BINARY = getYtdlpBinary();
 
+/* ════════════════════════════════════════
+   yt-dlp RUNNER
+════════════════════════════════════════ */
 function runYtdlp(url, extraArgs, timeoutMs=60000) {
   return new Promise((resolve, reject) => {
     const args = [
@@ -362,15 +207,14 @@ function runYtdlp(url, extraArgs, timeoutMs=60000) {
       "--no-check-certificates",
       "--no-warnings",
       "--no-playlist",
-      "--socket-timeout", "20",
-      "--retries", "1",
+      "--socket-timeout","20",
+      "--retries","2",
       "--no-cache-dir",
       ...extraArgs
     ];
 
     if (fs.existsSync(COOKIES_FILE)) {
       args.push("--cookies", COOKIES_FILE);
-      console.log("[yt-dlp] Using cookies");
     }
 
     execFile(YTDLP_BINARY, args, {
@@ -388,100 +232,54 @@ function runYtdlp(url, extraArgs, timeoutMs=60000) {
   });
 }
 
+/* ════════════════════════════════════════
+   OUTPUT PARSER
+════════════════════════════════════════ */
 function parseYtdlpOutput(output) {
   if (!output) return null;
   let directUrl=null, headers={};
 
   if (output.url&&output.url.startsWith("http")) {
-    directUrl=output.url; headers={...(output.http_headers||{})};
+    directUrl = output.url;
+    headers   = {...(output.http_headers||{})};
   }
   if (!directUrl&&output.requested_formats?.length) {
-    const vf=output.requested_formats.find(f=>f.url&&f.vcodec&&f.vcodec!=="none");
+    const vf = output.requested_formats.find(
+      f=>f.url&&f.url.startsWith("http")&&f.vcodec&&f.vcodec!=="none"
+    );
     if (vf) { directUrl=vf.url; headers={...(vf.http_headers||{})}; }
   }
   if (!directUrl&&output.formats?.length) {
-    const valid=output.formats.filter(f=>f.url&&f.url.startsWith("http")).reverse();
-    const best=valid.find(f=>f.vcodec!=="none"&&f.acodec!=="none")||
-               valid.find(f=>f.vcodec!=="none")||valid[0];
+    const valid = output.formats
+      .filter(f=>f.url&&f.url.startsWith("http"))
+      .reverse();
+    const best =
+      valid.find(f=>f.vcodec!=="none"&&f.acodec!=="none")||
+      valid.find(f=>f.vcodec!=="none")||
+      valid[0];
     if (best) { directUrl=best.url; headers={...(best.http_headers||{})}; }
   }
+
   if (!directUrl) return null;
   delete headers["Host"]; delete headers["host"];
+
   return {
-    url:directUrl,
-    title:output.title||output.id||"Video",
-    thumbnail:output.thumbnail||null,
+    url:       directUrl,
+    title:     output.title||output.id||"Video",
+    thumbnail: output.thumbnail||null,
     headers
   };
-}
-
-/* ════════════════════════════════════════
-   YOUTUBE EXTRACTOR - API FIRST, YTDLP FALLBACK
-════════════════════════════════════════ */
-async function extractYouTube(cleanUrl) {
-  console.log("[youtube] Starting extraction:", cleanUrl);
-  const videoId = extractVideoId(cleanUrl);
-
-  /* ── METHOD 1: YTStream RapidAPI (Primary) ── */
-  if (RAPIDAPI_KEY && videoId) {
-    try {
-      const result = await tryYTStreamAPI(videoId);
-      if (result && result.url) {
-        console.log("[youtube] ✓ YTStream API success");
-        return result;
-      }
-    } catch (e) {
-      console.log("[youtube] YTStream API failed:", e.message.slice(0,100));
-    }
-  }
-
-  /* ── METHOD 2: yt-dlp with cookies (Fallback) ── */
-  console.log("[youtube] Trying yt-dlp fallback...");
-  const clients = ["android_vr","android_testsuite","tv_embedded","android","ios"];
-
-  for (const client of clients) {
-    console.log(`[youtube] yt-dlp client: ${client}`);
-    try {
-      const output = await runYtdlp(cleanUrl, [
-        "--extractor-args", `youtube:player_client=${client}`,
-        "-f", "best[ext=mp4][height<=720]/best[ext=mp4]/best",
-      ], 45000);
-      const result = parseYtdlpOutput(output);
-      if (result&&result.url) {
-        console.log(`[youtube] ✓ yt-dlp success: ${client}`);
-        return result;
-      }
-    } catch (e) {
-      const msg=(e.message||"").toLowerCase();
-      console.log(`[youtube] yt-dlp ${client} failed`);
-      if (msg.includes("video unavailable")||msg.includes("private video")||
-          msg.includes("has been removed")||msg.includes("age-restricted")||
-          msg.includes("members-only")) {
-        throw new Error(getYouTubeError(msg));
-      }
-    }
-  }
-
-  throw new Error("YouTube video could not be downloaded. Please try again later.");
-}
-
-function getYouTubeError(msg) {
-  if (msg.includes("private")) return "This video is private.";
-  if (msg.includes("age-restricted")) return "This video is age-restricted.";
-  if (msg.includes("removed")) return "This video has been removed.";
-  if (msg.includes("members-only")) return "This video is for members only.";
-  return "This video is not available.";
 }
 
 /* ════════════════════════════════════════
    INSTAGRAM EXTRACTOR
 ════════════════════════════════════════ */
 async function extractInstagram(url) {
-  console.log("[instagram] Extracting:", url.slice(0,60));
+  console.log("[instagram] Extracting:", url.slice(0,70));
 
   const strategies = [
     {
-      name: "Chrome",
+      name: "chrome-desktop",
       args: [
         "-f","best",
         "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -490,37 +288,116 @@ async function extractInstagram(url) {
       ]
     },
     {
-      name: "Mobile",
+      name: "android-app",
       args: [
         "-f","best",
-        "--add-header","User-Agent:Instagram 219.0.0.12.117 Android",
+        "--add-header","User-Agent:Instagram 219.0.0.12.117 Android (30/11; 420dpi; 1080x2154; samsung; SM-G991B; o1s; exynos2100)",
+        "--add-header","Accept-Language:en-US",
       ]
+    },
+    {
+      name: "no-header",
+      args: ["-f","best"]
     }
   ];
 
   for (const s of strategies) {
     try {
-      const output = await runYtdlp(url, s.args, 45000);
+      console.log(`[instagram] Trying: ${s.name}`);
+      const output = await runYtdlp(url, s.args, 50000);
       const result = parseYtdlpOutput(output);
       if (result&&result.url) {
         console.log(`[instagram] ✓ Success: ${s.name}`);
         return result;
       }
     } catch (e) {
-      console.log(`[instagram] ${s.name} failed:`, e.message.slice(0,80));
+      console.log(`[instagram] ✗ ${s.name}:`, e.message.slice(0,80));
     }
   }
-  throw new Error("Instagram video could not be extracted.");
+
+  throw new Error("Instagram video could not be extracted. It may be private or deleted.");
 }
 
 /* ════════════════════════════════════════
-   GENERIC EXTRACTOR
+   FACEBOOK EXTRACTOR
 ════════════════════════════════════════ */
-async function extractGeneric(url) {
-  const output = await runYtdlp(url,["-f","best[ext=mp4]/best"],45000);
-  const result = parseYtdlpOutput(output);
-  if (!result) throw new Error("No stream URL found.");
-  return result;
+async function extractFacebook(url) {
+  console.log("[facebook] Extracting:", url.slice(0,70));
+
+  const strategies = [
+    {
+      name: "chrome-desktop",
+      args: [
+        "-f","best",
+        "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header","Accept-Language:en-US,en;q=0.9",
+      ]
+    },
+    {
+      name: "mobile",
+      args: [
+        "-f","best",
+        "--add-header","User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+      ]
+    },
+    {
+      name: "no-header",
+      args: ["-f","best"]
+    }
+  ];
+
+  for (const s of strategies) {
+    try {
+      console.log(`[facebook] Trying: ${s.name}`);
+      const output = await runYtdlp(url, s.args, 50000);
+      const result = parseYtdlpOutput(output);
+      if (result&&result.url) {
+        console.log(`[facebook] ✓ Success: ${s.name}`);
+        return result;
+      }
+    } catch (e) {
+      console.log(`[facebook] ✗ ${s.name}:`, e.message.slice(0,80));
+    }
+  }
+
+  throw new Error("Facebook video could not be extracted. It may be private or restricted.");
+}
+
+/* ════════════════════════════════════════
+   TWITTER / X EXTRACTOR
+════════════════════════════════════════ */
+async function extractTwitter(url) {
+  console.log("[twitter] Extracting:", url.slice(0,70));
+
+  const strategies = [
+    {
+      name: "chrome-desktop",
+      args: [
+        "-f","best[ext=mp4]/best",
+        "--add-header","User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      ]
+    },
+    {
+      name: "no-header",
+      args: ["-f","best[ext=mp4]/best"]
+    }
+  ];
+
+  for (const s of strategies) {
+    try {
+      console.log(`[twitter] Trying: ${s.name}`);
+      const output = await runYtdlp(url, s.args, 50000);
+      const result = parseYtdlpOutput(output);
+      if (result&&result.url) {
+        console.log(`[twitter] ✓ Success: ${s.name}`);
+        return result;
+      }
+    } catch (e) {
+      console.log(`[twitter] ✗ ${s.name}:`, e.message.slice(0,80));
+    }
+  }
+
+  throw new Error("Twitter/X video could not be extracted. It may be private or restricted.");
 }
 
 /* ════════════════════════════════════════
@@ -528,11 +405,17 @@ async function extractGeneric(url) {
 ════════════════════════════════════════ */
 async function extractDirectVideoUrl(pageUrl) {
   const platform = getPlatform(pageUrl);
-  console.log("[extract] Platform:", platform);
+  console.log("[extract] Platform:", platform, "| URL:", pageUrl.slice(0,70));
 
-  if (platform==="youtube") return extractYouTube(cleanYouTubeUrl(pageUrl));
+  if (!platform) {
+    throw new Error("Only Instagram, Facebook, and Twitter/X links are supported.");
+  }
+
   if (platform==="instagram") return extractInstagram(pageUrl);
-  return extractGeneric(pageUrl);
+  if (platform==="facebook")  return extractFacebook(pageUrl);
+  if (platform==="twitter")   return extractTwitter(pageUrl);
+
+  throw new Error("Unsupported platform.");
 }
 
 /* ════════════════════════════════════════
@@ -545,7 +428,9 @@ async function fetchSafe(initialUrl, options={}, redirectCount=0) {
   const url = await validateUrl(initialUrl);
   const h = {"User-Agent":UA,"Accept":"*/*",...(options.headers||{})};
   delete h["Host"]; delete h["host"];
-  const response = await fetch(url,{...options,redirect:"manual",headers:h,signal:options.signal});
+  const response = await fetch(url,{
+    ...options, redirect:"manual", headers:h, signal:options.signal
+  });
   if ([301,302,303,307,308].includes(response.status)) {
     const loc = response.headers.get("location");
     if (!loc) throw new Error("Redirect location missing.");
@@ -555,8 +440,12 @@ async function fetchSafe(initialUrl, options={}, redirectCount=0) {
 }
 
 async function fetchCDN(targetUrl, headers, signal) {
-  const h = {"User-Agent":UA,"Accept":"*/*","Accept-Encoding":"identity",...headers};
-  delete h["Host"]; delete h["host"]; delete h["Range"]; delete h["range"];
+  const h = {
+    "User-Agent":UA, "Accept":"*/*", "Accept-Encoding":"identity",
+    ...headers
+  };
+  delete h["Host"]; delete h["host"];
+  delete h["Range"]; delete h["range"];
   return fetch(targetUrl,{method:"GET",headers:h,redirect:"follow",signal});
 }
 
@@ -575,6 +464,7 @@ async function streamToResponse(response, res, controller, startTime) {
     : response.body;
 
   let total=0, limitExceeded=false;
+
   const guard = new Writable({
     highWaterMark: 512*1024,
     write(chunk,_enc,cb) {
@@ -607,11 +497,10 @@ async function streamToResponse(response, res, controller, startTime) {
 app.get("/health", (_req,res) => res.json({
   ok:      true,
   service: "QuickSave",
-  version: "5.3",
+  version: "6.0",
+  platforms: ["instagram","facebook","twitter"],
   ytdlp:   YTDLP_BINARY,
-  cookies: fs.existsSync(COOKIES_FILE),
-  rapidapi: !!RAPIDAPI_KEY,
-  ytstream_host: YTSTREAM_HOST
+  cookies: fs.existsSync(COOKIES_FILE)
 }));
 
 app.get("/share", (req,res) => {
@@ -629,174 +518,210 @@ app.post("/api/inspect", async (req,res) => {
 
   try {
     const rawUrl = req.body?.url;
-    let urlObj=await validateUrl(rawUrl);
-    let targetUrl=urlObj.toString();
-    let extractedTitle=null,customHeaders={},useCDNFetch=false,downloadId=null,thumbnail=null;
+    let urlObj      = await validateUrl(rawUrl);
+    let targetUrl   = urlObj.toString();
+    let extractedTitle=null, customHeaders={}, useCDNFetch=false;
+    let downloadId=null, thumbnail=null;
+
+    // Platform check
+    if (!isSupportedUrl(targetUrl)) {
+      return res.status(400).json({
+        ok:      false,
+        type:    "unsupported",
+        message: "Only Instagram, Facebook, and Twitter/X links are supported."
+      });
+    }
 
     if (extractionCache.has(targetUrl)) {
-      const c=extractionCache.get(targetUrl);
+      const c = extractionCache.get(targetUrl);
       targetUrl=c.url; extractedTitle=c.title; thumbnail=c.thumbnail;
       customHeaders=c.headers||{}; downloadId=c.downloadId; useCDNFetch=true;
       console.log("[inspect] cache hit");
 
-    } else if (isSocialMediaUrl(targetUrl)) {
-      const data=await extractDirectVideoUrl(targetUrl);
-      const c=cacheExtraction(targetUrl,data);
+    } else {
+      console.log("[inspect] Extracting:", targetUrl.slice(0,70));
+      const data = await extractDirectVideoUrl(targetUrl);
+      const c    = cacheExtraction(targetUrl, data);
       targetUrl=c.url; extractedTitle=c.title; thumbnail=c.thumbnail;
       customHeaders=c.headers||{}; downloadId=c.downloadId; useCDNFetch=true;
-
-    } else {
-      const c=cacheExtraction(targetUrl,{url:targetUrl,title:null,headers:{},thumbnail:null});
-      downloadId=c.downloadId;
     }
 
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),INSPECT_TIMEOUT);
+    const controller = new AbortController();
+    const timer      = setTimeout(()=>controller.abort(), INSPECT_TIMEOUT);
 
     try {
       let response=null;
       try {
-        const h={"User-Agent":UA,"Accept":"*/*",...customHeaders};
+        const h = {"User-Agent":UA,"Accept":"*/*",...customHeaders};
         delete h["Host"]; delete h["host"]; delete h["Range"]; delete h["range"];
-        response=await fetch(targetUrl,{method:"HEAD",headers:h,redirect:"follow",signal:controller.signal});
+        response = await fetch(targetUrl,{
+          method:"HEAD", headers:h, redirect:"follow", signal:controller.signal
+        });
       } catch { response=null; }
 
-      let contentType=response?getRawContentType(response):"";
-      let contentLength=response?Number(response.headers.get("content-length")||0):0;
+      let contentType   = response ? getRawContentType(response) : "";
+      let contentLength = response ? Number(response.headers.get("content-length")||0) : 0;
 
       if (!response||!response.ok||!isValidMediaType(contentType)) {
-        response=useCDNFetch
-          ?await fetchCDN(targetUrl,customHeaders,controller.signal)
-          :await fetchSafe(targetUrl,{method:"GET",signal:controller.signal});
-        contentType=getRawContentType(response);
-        contentLength=Number(response.headers.get("content-length")||0);
+        response = await fetchCDN(targetUrl, customHeaders, controller.signal);
+        contentType   = getRawContentType(response);
+        contentLength = Number(response.headers.get("content-length")||0);
         try { await response.body?.cancel(); } catch {}
       }
 
-      if (contentType==="application/octet-stream"&&(extractedTitle||useCDNFetch))
-        contentType="video/mp4";
+      if (contentType==="application/octet-stream") contentType="video/mp4";
 
       if (!response.ok)
-        return res.status(400).json({ok:false,type:"error",message:`Server returned HTTP ${response.status}.`});
-      if (!isValidMediaType(contentType))
-        return res.status(400).json({ok:false,type:"unsupported",message:"This URL does not contain a valid media file."});
-      if (contentLength&&contentLength>MAX_BYTES)
-        return res.status(400).json({ok:false,type:"too-large",message:"File is larger than 250 MB."});
+        return res.status(400).json({
+          ok:false, type:"error",
+          message:`Server returned HTTP ${response.status}.`
+        });
 
-      const filename=filenameFromUrl(targetUrl,contentType,extractedTitle);
-      console.log("[inspect] ok:",filename,contentType,contentLength);
+      if (!isValidMediaType(contentType))
+        return res.status(400).json({
+          ok:false, type:"unsupported",
+          message:"This URL does not contain a valid media file."
+        });
+
+      if (contentLength&&contentLength>MAX_BYTES)
+        return res.status(400).json({
+          ok:false, type:"too-large",
+          message:"File is larger than 250 MB."
+        });
+
+      const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
+      console.log("[inspect] ok:", filename, contentType, contentLength);
 
       return res.json({
-        ok:true,type:"media",id:downloadId,
+        ok:true, type:"media", id:downloadId,
         downloadUrl:`/api/download?id=${downloadId}`,
-        directUrl:targetUrl,url:targetUrl,
+        directUrl:targetUrl, url:targetUrl,
         originalUrl:urlObj.toString(),
         contentType:contentType||"video/mp4",
         size:contentLength||null,
-        filename,thumbnail
+        filename, thumbnail
       });
 
     } finally { clearTimeout(timer); }
 
   } catch(e) {
-    console.error("[inspect] error:",e.message);
-    return res.status(400).json({ok:false,type:"error",message:e.message||"Unable to process this URL."});
+    console.error("[inspect] error:", e.message);
+    return res.status(400).json({
+      ok:false, type:"error",
+      message: e.message||"Unable to process this URL."
+    });
   }
 });
 
 /* ── DOWNLOAD ── */
 app.get("/api/download", async (req,res) => {
-  const ip=cleanIp(req.headers["x-forwarded-for"]||req.socket.remoteAddress);
+  const ip = cleanIp(req.headers["x-forwarded-for"]||req.socket.remoteAddress);
   if (!checkRateLimit(ip))
     return res.status(429).json({ok:false,message:"Too many requests."});
   if (!acquireDownload(ip))
     return res.status(429).json({ok:false,message:"Too many active downloads."});
 
-  const startTime=Date.now();
+  const startTime = Date.now();
   try {
-    let targetUrl=null,extractedTitle=null,customHeaders={},originalSocialUrl=null;
-    const idParam=req.query.id?String(req.query.id).trim():null;
+    let targetUrl=null, extractedTitle=null, customHeaders={}, originalUrl=null;
+    const idParam = req.query.id ? String(req.query.id).trim() : null;
 
     if (idParam) {
-      const cached=extractionCache.get(idParam);
+      const cached = extractionCache.get(idParam);
       if (!cached)
-        return res.status(410).json({ok:false,message:"Link expired. Please click 'Get media' again."});
+        return res.status(410).json({
+          ok:false,
+          message:"Link expired. Please click 'Get media' again."
+        });
       targetUrl=cached.url; extractedTitle=cached.title;
-      customHeaders=cached.headers||{}; originalSocialUrl=cached.originalUrl;
+      customHeaders=cached.headers||{}; originalUrl=cached.originalUrl;
 
     } else {
-      let rawUrl=req.query.url;
-      if (!rawUrl) return res.status(400).json({ok:false,message:"id or url required."});
+      let rawUrl = req.query.url;
+      if (!rawUrl)
+        return res.status(400).json({ok:false, message:"id or url required."});
       for(let i=0;i<2;i++){
         try{const d=decodeURIComponent(rawUrl);if(d===rawUrl)break;rawUrl=d;}catch{break;}
       }
       if (extractionCache.has(rawUrl)) {
-        const c=extractionCache.get(rawUrl);
+        const c = extractionCache.get(rawUrl);
         targetUrl=c.url; extractedTitle=c.title;
-        customHeaders=c.headers||{}; originalSocialUrl=c.originalUrl;
+        customHeaders=c.headers||{}; originalUrl=c.originalUrl;
       } else {
-        const validated=await validateUrl(rawUrl);
-        targetUrl=validated.toString();
-        if (isSocialMediaUrl(targetUrl)) {
-          originalSocialUrl=targetUrl;
-          const data=await extractDirectVideoUrl(targetUrl);
-          const c=cacheExtraction(targetUrl,data);
+        const validated = await validateUrl(rawUrl);
+        targetUrl = validated.toString();
+        if (isSupportedUrl(targetUrl)) {
+          originalUrl = targetUrl;
+          const data = await extractDirectVideoUrl(targetUrl);
+          const c    = cacheExtraction(targetUrl, data);
           targetUrl=c.url; extractedTitle=c.title; customHeaders=c.headers||{};
         }
       }
     }
 
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),DOWNLOAD_TIMEOUT);
-    req.on("close",()=>{controller.abort();clearTimeout(timer);});
+    const controller = new AbortController();
+    const timer      = setTimeout(()=>controller.abort(), DOWNLOAD_TIMEOUT);
+    req.on("close",()=>{ controller.abort(); clearTimeout(timer); });
 
     try {
-      let response=await fetchCDN(targetUrl,customHeaders,controller.signal);
-      let contentType=getRawContentType(response);
+      let response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
+      let contentType = getRawContentType(response);
       if (contentType==="application/octet-stream") contentType="video/mp4";
 
+      // Agar CDN response bad hai to re-extract karo
       if (!response.ok||!isValidMediaType(contentType)) {
-        if (originalSocialUrl&&isSocialMediaUrl(originalSocialUrl)) {
+        if (originalUrl&&isSupportedUrl(originalUrl)) {
           try {
-            const fresh=await extractDirectVideoUrl(originalSocialUrl);
-            const c=cacheExtraction(originalSocialUrl,fresh);
+            console.log("[dl] Re-extracting:", originalUrl.slice(0,70));
+            const fresh = await extractDirectVideoUrl(originalUrl);
+            const c     = cacheExtraction(originalUrl, fresh);
             targetUrl=c.url; customHeaders=c.headers||{}; extractedTitle=fresh.title;
-            response=await fetchCDN(targetUrl,customHeaders,controller.signal);
-            contentType=getRawContentType(response);
+            response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
+            contentType = getRawContentType(response);
             if (contentType==="application/octet-stream") contentType="video/mp4";
           } catch {
-            return res.status(502).json({ok:false,message:"Media expired. Please click 'Get media' again."});
+            return res.status(502).json({
+              ok:false,
+              message:"Media expired. Please click 'Get media' again."
+            });
           }
         }
         if (!response.ok||!isValidMediaType(contentType))
-          return res.status(502).json({ok:false,message:`Media fetch failed (${response.status}).`});
+          return res.status(502).json({
+            ok:false,
+            message:`Media fetch failed (${response.status}).`
+          });
       }
 
-      const filename=filenameFromUrl(targetUrl,contentType,extractedTitle);
-      const safeFilename=filename.replace(/[\r\n"']/g,"");
-      const encodedFilename=encodeURIComponent(safeFilename);
-      const wantInline=req.query.inline==="1";
+      const filename        = filenameFromUrl(targetUrl, contentType, extractedTitle);
+      const safeFilename    = filename.replace(/[\r\n"']/g,"");
+      const encodedFilename = encodeURIComponent(safeFilename);
+      const wantInline      = req.query.inline==="1";
 
       res.status(200);
-      res.setHeader("Content-Type",contentType);
+      res.setHeader("Content-Type", contentType);
       res.setHeader("Content-Disposition",
         wantInline
-          ?`inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
-          :`attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+          ? `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+          : `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
       );
       res.setHeader("Cache-Control","no-store");
       res.setHeader("Accept-Ranges","none");
       res.setHeader("X-Content-Type-Options","nosniff");
 
-      await streamToResponse(response,res,controller,startTime);
+      await streamToResponse(response, res, controller, startTime);
 
     } finally { clearTimeout(timer); }
 
   } catch(e) {
-    console.error("[dl] error:",e.message);
+    console.error("[dl] error:", e.message);
     if (!res.headersSent)
-      res.status(e.status||400).json({ok:false,
-        message:e.name==="AbortError"?"Download timed out.":e.message||"Download failed."});
+      res.status(e.status||400).json({
+        ok:false,
+        message: e.name==="AbortError"
+          ? "Download timed out."
+          : e.message||"Download failed."
+      });
     else res.destroy();
   } finally { releaseDownload(ip); }
 });
@@ -815,8 +740,8 @@ app.use((err,_req,res,next)=>{
 /* ════════════════════════════════════════
    START
 ════════════════════════════════════════ */
-const server=app.listen(PORT,"0.0.0.0",()=>
-  console.log(`QuickSave v5.3 running on port ${PORT}`)
+const server = app.listen(PORT,"0.0.0.0",()=>
+  console.log(`QuickSave v6.0 running on port ${PORT}`)
 );
 function shutdown(sig) {
   console.log(sig+" received");
