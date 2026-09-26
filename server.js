@@ -169,7 +169,7 @@ async function extractDirectVideoUrl(url) {
 }
 
 /* ── fetch helpers ── */
-const UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 async function fetchSafe(initialUrl, options={}, redirectCount=0) {
   if (redirectCount>MAX_REDIRECTS) throw new Error("Too many redirects.");
@@ -185,16 +185,29 @@ async function fetchSafe(initialUrl, options={}, redirectCount=0) {
   return response;
 }
 
+/* CDN fetch - NO Range headers, fresh GET only */
 async function fetchCDN(targetUrl, headers, signal) {
-  const h={"User-Agent":UA,"Accept":"*/*",...headers};
+  const h={
+    "User-Agent": UA,
+    "Accept": "*/*",
+    "Accept-Encoding": "identity", // Compression disable - faster streaming
+    ...headers
+  };
   delete h["Host"]; delete h["host"];
-  // CRITICAL: Range headers CDN ko mat bhejo - fresh GET only
-  delete h["Range"]; delete h["range"];
-  return fetch(targetUrl,{method:"GET",headers:h,redirect:"follow",signal});
+  delete h["Range"]; delete h["range"]; // Range NEVER to CDN
+  
+  return fetch(targetUrl, {
+    method: "GET",
+    headers: h,
+    redirect: "follow",
+    signal,
+    // Node.js fetch high watermark for faster streaming
+    highWaterMark: 1024 * 1024 // 1MB chunks
+  });
 }
 
 /* ── health ── */
-app.get("/health",(_req,res)=>res.json({ok:true,service:"QuickSave",version:"3.0"}));
+app.get("/health",(_req,res)=>res.json({ok:true,service:"QuickSave",version:"3.1"}));
 
 /* ══════════════════════════════════════════
    INSPECT
@@ -227,24 +240,18 @@ app.post("/api/inspect", async (req,res) => {
     const timer=setTimeout(()=>controller.abort(),INSPECT_TIMEOUT);
 
     try {
-      // Simple HEAD check (no Range)
       let response=null;
       try {
-        if (useCDNFetch) {
-          const h={"User-Agent":UA,"Accept":"*/*",...customHeaders};
-          delete h["Host"]; delete h["host"];
-          response=await fetch(targetUrl,{method:"HEAD",headers:h,redirect:"follow",signal:controller.signal});
-        } else {
-          response=await fetchSafe(targetUrl,{method:"HEAD",signal:controller.signal});
-        }
+        const h={"User-Agent":UA,"Accept":"*/*",...customHeaders};
+        delete h["Host"]; delete h["host"];
+        delete h["Range"]; delete h["range"];
+        response=await fetch(targetUrl,{method:"HEAD",headers:h,redirect:"follow",signal:controller.signal});
       } catch { response=null; }
 
       let contentType=response?getRawContentType(response):"";
       let contentLength=response?Number(response.headers.get("content-length")||0):0;
 
-      // HEAD kaam nahi kiya ya invalid type aaya
       if (!response||!response.ok||!isValidMediaType(contentType)) {
-        // Simple GET first bytes
         if (useCDNFetch) {
           response=await fetchCDN(targetUrl,customHeaders,controller.signal);
         } else {
@@ -289,15 +296,14 @@ app.post("/api/inspect", async (req,res) => {
 });
 
 /* ══════════════════════════════════════════
-   DOWNLOAD — KEY FIX IS HERE
-   Server CDN se poora file download karta hai
-   aur browser ko fresh stream karta hai.
-   Range headers CDN tak NAHI jaate.
+   DOWNLOAD — SPEED OPTIMIZED
 ══════════════════════════════════════════ */
 app.get("/api/download", async (req,res) => {
   const ip=cleanIp(req.headers["x-forwarded-for"]||req.socket.remoteAddress);
   if (!checkRateLimit(ip))  return res.status(429).json({ok:false,message:"Too many requests."});
   if (!acquireDownload(ip)) return res.status(429).json({ok:false,message:"Too many active downloads."});
+
+  const startTime = Date.now();
 
   try {
     let targetUrl=null, extractedTitle=null, customHeaders={};
@@ -306,30 +312,27 @@ app.get("/api/download", async (req,res) => {
     const idParam=req.query.id?String(req.query.id).trim():null;
 
     if (idParam) {
-      let cached=extractionCache.get(idParam);
-
-      // Agar cache miss hai (expired) aur originalUrl pata nahi
+      const cached=extractionCache.get(idParam);
       if (!cached) {
         return res.status(410).json({ok:false,
           message:"Link expired. Please tap 'Get media' again."});
       }
-
-      // Check: kya cached CDN URL fresh hai?
-      originalSocialUrl=cached.originalUrl;
       targetUrl=cached.url;
       extractedTitle=cached.title;
       customHeaders=cached.headers||{};
-
-      console.log("[download] id=",idParam,"→",targetUrl.slice(0,80));
+      originalSocialUrl=cached.originalUrl;
+      console.log("[dl] id=",idParam,"url=",targetUrl.slice(0,80));
 
     } else {
-      // URL fallback path
+      // URL fallback
       let rawUrl=req.query.url;
       if (!rawUrl) return res.status(400).json({ok:false,message:"id or url required."});
 
       for(let i=0;i<2;i++){
         try{const d=decodeURIComponent(rawUrl);if(d===rawUrl)break;rawUrl=d;}catch{break;}
       }
+
+      console.log("[dl] url=",String(rawUrl).slice(0,120));
 
       if (extractionCache.has(rawUrl)) {
         const c=extractionCache.get(rawUrl);
@@ -352,38 +355,33 @@ app.get("/api/download", async (req,res) => {
     req.on("close",()=>{controller.abort();clearTimeout(timer);});
 
     try {
-      // ── CRITICAL FIX ──
-      // CDN ko sirf fresh GET bhejo - NO Range headers
-      // Yeh .json issue aur paused download fix karta hai
-      let response = await fetchCDN(targetUrl, customHeaders, controller.signal);
-
+      // Fresh CDN fetch - no range headers
+      let response=await fetchCDN(targetUrl,customHeaders,controller.signal);
       let contentType=getRawContentType(response);
 
-      // Agar CDN ne error/JSON diya = URL expire hui, re-extract karo
-      if (!response.ok || !isValidMediaType(contentType)) {
-        console.log("[download] CDN bad response:",response.status, contentType);
+      // Re-extract if CDN expired
+      if (!response.ok||!isValidMediaType(contentType)) {
+        console.log("[dl] CDN bad:",response.status,contentType,"re-extracting...");
 
-        if (originalSocialUrl && isSocialMediaUrl(originalSocialUrl)) {
-          console.log("[download] Re-extracting from:", originalSocialUrl);
+        if (originalSocialUrl&&isSocialMediaUrl(originalSocialUrl)) {
           try {
             const fresh=await extractDirectVideoUrl(originalSocialUrl);
             const c=cacheExtraction(originalSocialUrl,fresh);
             targetUrl=c.url; customHeaders=c.headers||{}; extractedTitle=fresh.title;
             response=await fetchCDN(targetUrl,customHeaders,controller.signal);
             contentType=getRawContentType(response);
-          } catch(e) {
+          } catch {
             return res.status(502).json({ok:false,
-              message:"Media link expired. Please tap 'Get media' again."});
+              message:"Media expired. Please tap 'Get media' again."});
           }
         }
 
-        if (!response.ok || !isValidMediaType(contentType)) {
+        if (!response.ok||!isValidMediaType(contentType)) {
           return res.status(502).json({ok:false,
-            message:`Invalid response from media server (${response.status} ${contentType}). Please try again.`});
+            message:`Bad media response (${response.status}). Please try again.`});
         }
       }
 
-      // Content-Length check
       const contentLength=Number(response.headers.get("content-length")||0);
       if (contentLength&&contentLength>MAX_BYTES)
         return res.status(413).json({ok:false,message:"File exceeds 250 MB limit."});
@@ -391,11 +389,9 @@ app.get("/api/download", async (req,res) => {
       const filename=filenameFromUrl(targetUrl,contentType,extractedTitle);
       const safeFilename=filename.replace(/[\r\n"']/g,"");
       const encodedFilename=encodeURIComponent(safeFilename);
-
       const wantInline=req.query.inline==="1";
 
-      // ── Send headers ──
-      // Status 200 ALWAYS (not 206) - hum range support nahi karte CDN ke liye
+      // ── Speed optimized headers ──
       res.status(200);
       res.setHeader("Content-Type", contentType);
       res.setHeader("Content-Disposition",
@@ -403,31 +399,68 @@ app.get("/api/download", async (req,res) => {
           ? `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
           : `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
       );
-      res.setHeader("Cache-Control","no-store");
-      // Accept-Ranges: none - browser range request nahi karega
-      // Yahi .json ka fix hai!
-      res.setHeader("Accept-Ranges","none");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Accept-Ranges", "none"); // Range disable = no .json issue
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("Transfer-Encoding", "chunked"); // Chunked = faster start
 
-      if (contentLength) res.setHeader("Content-Length", String(contentLength));
+      if (contentLength) {
+        res.setHeader("Content-Length", String(contentLength));
+      }
 
       if (!response.body) throw new Error("Media stream unavailable.");
 
-      // Stream karo
-      let total=0;
-      for await (const chunk of response.body) {
-        total+=chunk.length;
-        if (total>MAX_BYTES) {
-          controller.abort();
-          if (!res.headersSent) res.status(413).json({ok:false,message:"Download exceeded limit."});
-          else res.destroy();
-          return;
+      // ── FAST PIPE using Node.js stream pipeline ──
+      // Yeh sabse fast method hai - direct pipe without manual chunk loop
+      const { Writable } = require("stream");
+      const { pipeline } = require("stream/promises");
+
+      let total = 0;
+      let limitExceeded = false;
+
+      const sizeChecker = new Writable({
+        // Large highWaterMark = faster throughput
+        highWaterMark: 512 * 1024, // 512KB buffer
+        write(chunk, _encoding, callback) {
+          if (limitExceeded) return callback();
+          total += chunk.length;
+          if (total > MAX_BYTES) {
+            limitExceeded = true;
+            controller.abort();
+            res.destroy();
+            return callback(new Error("Size limit exceeded"));
+          }
+          if (!res.write(chunk)) {
+            // Backpressure handle
+            res.once("drain", callback);
+          } else {
+            callback();
+          }
+        },
+        final(callback) {
+          if (!limitExceeded) {
+            res.end();
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            const mbps = (total / 1024 / 1024 / parseFloat(elapsed)).toFixed(2);
+            console.log(`[dl] done: ${(total/1024/1024).toFixed(1)}MB in ${elapsed}s = ${mbps} MB/s`);
+          }
+          callback();
         }
-        if (!res.write(chunk)) {
-          await new Promise(r=>res.once("drain",r));
+      });
+
+      // Web ReadableStream to Node.js stream
+      const nodeStream = require("stream").Readable.fromWeb
+        ? require("stream").Readable.fromWeb(response.body)
+        : response.body;
+
+      try {
+        await pipeline(nodeStream, sizeChecker);
+      } catch (e) {
+        if (!limitExceeded && e.name !== "AbortError") {
+          throw e;
         }
       }
-      res.end();
-      console.log("[download] complete, bytes=",total);
 
     } finally { clearTimeout(timer); }
 
@@ -452,7 +485,7 @@ app.use((err,_req,res,next)=>{
 });
 
 const server=app.listen(PORT,"0.0.0.0",()=>
-  console.log(`QuickSave v3.0 running on port ${PORT}`)
+  console.log(`QuickSave v3.1 running on port ${PORT}`)
 );
 
 function shutdown(sig){
