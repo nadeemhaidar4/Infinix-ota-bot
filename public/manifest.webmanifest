@@ -7,12 +7,12 @@
   "theme_color": "#080b16",
   "description": "QuickSave - Save videos from Instagram, YouTube, TikTok, Facebook",
   "share_target": {
-    "action": "/share",
+    "action": "/",
     "method": "GET",
     "params": {
-      "url": "url",
+      "title": "title",
       "text": "text",
-      "title": "title"
+      "url": "url"
     }
   },
   "icons": [
