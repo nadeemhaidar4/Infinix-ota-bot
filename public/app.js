@@ -1,5 +1,5 @@
-/* QuickSave app.js v4.1 */
-console.log("QuickSave app.js v4.1 loaded");
+/* QuickSave app.js v4.2 */
+console.log("QuickSave app.js v4.2 loaded");
 
 const $ = id => document.getElementById(id);
 const url       = $("url"),
@@ -59,7 +59,6 @@ function escapeHtml(s) {
   );
 }
 
-// Ab hum yahan direct directUrl use karenge speed ke liye, aur nahi to fallback proxy (/api/download) par.
 function buildDlUrl(d) {
   if (d && d.directUrl) return d.directUrl; 
   if (!d || !d.id) return "#";
@@ -90,7 +89,6 @@ function renderHistory() {
   if (!h.length) { historyPanel.classList.add("hide"); return; }
   historyPanel.classList.remove("hide");
   history.innerHTML = h.map(x => {
-    // History ke liye id proxy use kar rahe hain, in case directUrl expire ho jaye
     const href = x.id ? escapeHtml(`/api/download?id=${x.id}`) : "#";
     return `<div class="historyrow">
       <div>
@@ -141,8 +139,6 @@ async function processUrl(value, autoDownload = false) {
     });
     const d = await r.json();
 
-    console.log("Inspect:", { ok: d.ok, id: d.id, filename: d.filename });
-
     if (!r.ok || !d.ok) throw new Error(d.message || "Could not process link.");
     if (!d.id) throw new Error("Server error: no download ID.");
 
@@ -154,7 +150,6 @@ async function processUrl(value, autoDownload = false) {
     showPreview(d);
 
     download.href = dlUrl;
-    // Tries to force native download behavior
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
     download.setAttribute("target", "_blank"); 
 
@@ -181,6 +176,7 @@ function triggerDownload(d) {
   const dlUrl = buildDlUrl(d);
   download.href = dlUrl;
   download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
+  download.setAttribute("target", "_blank");
 
   saveHistory({
     id:   d.id,
@@ -203,21 +199,27 @@ function triggerDownload(d) {
   }, 500);
 }
 
-/* ── Preview (Thumbnail Fix) ── */
+/* ── Preview (Strictly Small Box Fix) ── */
 function showPreview(d) {
   thumb.innerHTML = "";
-  // Agar backend se thumbnail URL mili hai, toh usko show karo
+  // Is line se image dabbe ke bahar nahi niklegi
+  thumb.style.overflow = "hidden"; 
+  
   if (d.thumbnail) {
     const img = new Image();
     img.src = d.thumbnail;
-    img.style.width = "100%";
-    img.style.height = "100%";
+    
+    // Yahan sirf 56x56 px ki size lock kar di hai
+    img.style.width = "56px";
+    img.style.height = "56px";
+    img.style.maxWidth = "56px";
+    img.style.maxHeight = "56px";
     img.style.objectFit = "cover";
-    img.style.borderRadius = "12px";
+    img.style.display = "block";
+    
     img.onload  = () => thumb.appendChild(img);
     img.onerror = () => (thumb.innerHTML = "<span>▶</span>");
   } else {
-    // Agar thumbnail nahi hai toh purana logic (Play ya Note icon)
     const mime = (d.contentType || "").toLowerCase();
     if (mime.startsWith("image/")) {
        thumb.innerHTML = "<span>◈</span>";
@@ -267,6 +269,7 @@ download.addEventListener("click", () => {
   const dlUrl = buildDlUrl(current);
   download.href = dlUrl;
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
+  download.setAttribute("target", "_blank");
 
   saveHistory({
     id:   current.id,
