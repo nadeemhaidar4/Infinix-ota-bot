@@ -183,22 +183,32 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   YT-DLP EXTRACTOR (PLATFORM SPECIFIC FIX)
+   YT-DLP EXTRACTOR (UNIVERSAL FIX)
 ════════════════════════════════════════ */
 async function extractDirectVideoUrl(pageUrl) {
   console.log("[extract] Starting for:", pageUrl.slice(0, 80));
   try {
-    const isIG = pageUrl.includes("instagram.com");
+    // 1. URL Cleanup: Remove tracking parameters (like ?si= in YouTube) which break extraction
+    let cleanUrl = pageUrl;
+    try {
+      if (cleanUrl.includes("youtube.com") || cleanUrl.includes("youtu.be")) {
+        const u = new URL(cleanUrl);
+        u.searchParams.delete("si");
+        cleanUrl = u.toString();
+      }
+    } catch (e) {}
+
+    const isIG = cleanUrl.includes("instagram.com");
 
     const options = {
       dumpSingleJson:      true,
       noCheckCertificates: true,
       noWarnings:          true,
-      // 'b' (best) ensures we get the best quality file that ALREADY has both audio+video merged.
-      format: "b[ext=mp4]/b"
+      noPlaylist:          true, // Crucial for YouTube to process only 1 video
+      format:              "best" // Universally ensures one file containing both audio & video
     };
 
-    // Instagram needs fake headers to avoid bot block, YouTube hates them.
+    // Instagram specific headers to avoid bot detection
     if (isIG) {
       options.addHeader = [
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -207,7 +217,7 @@ async function extractDirectVideoUrl(pageUrl) {
       ];
     }
 
-    const output = await youtubedl(pageUrl, options);
+    const output = await youtubedl(cleanUrl, options);
 
     if (!output) throw new Error("No output from yt-dlp.");
 
@@ -215,16 +225,7 @@ async function extractDirectVideoUrl(pageUrl) {
     let headers   = { ...(output.http_headers || {}) };
     delete headers["Host"]; delete headers["host"];
 
-    // Fallback logic in case the direct url is missing
-    if (!directUrl && output.requested_formats?.length) {
-      const fmt = output.requested_formats.find(f => f.url && f.vcodec !== 'none' && f.acodec !== 'none') || output.requested_formats[0];
-      if (fmt) {
-        directUrl = fmt.url;
-        headers   = { ...(fmt.http_headers || {}) };
-        delete headers["Host"]; delete headers["host"];
-      }
-    }
-
+    // Universal Fallback if direct output.url is missing
     if (!directUrl && output.formats?.length) {
       const fmt = output.formats.reverse().find(f => f.url && f.vcodec !== 'none' && f.acodec !== 'none') 
                   || output.formats.filter(f => f.url).pop();
@@ -341,7 +342,7 @@ async function streamToResponse(response, res, controller, startTime) {
 }
 
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "QuickSave", version: "4.6" })
+  res.json({ ok: true, service: "QuickSave", version: "4.7" })
 );
 
 app.get("/share", (req, res) => {
@@ -579,7 +580,7 @@ app.use((err, _req, res, next) => {
    START
 ════════════════════════════════════════ */
 const server = app.listen(PORT, "0.0.0.0", () =>
-  console.log(`QuickSave v4.6 running on port ${PORT}`)
+  console.log(`QuickSave v4.7 running on port ${PORT}`)
 );
 
 function shutdown(sig) {
