@@ -1,5 +1,5 @@
-/* QuickSave app.js v4.0 */
-console.log("QuickSave app.js v4.0 loaded");
+/* QuickSave app.js v4.1 */
+console.log("QuickSave app.js v4.1 loaded");
 
 const $ = id => document.getElementById(id);
 const url       = $("url"),
@@ -59,10 +59,11 @@ function escapeHtml(s) {
   );
 }
 
-function buildDlUrl(d, inline = false) {
+// Ab hum yahan direct directUrl use karenge speed ke liye, aur nahi to fallback proxy (/api/download) par.
+function buildDlUrl(d) {
+  if (d && d.directUrl) return d.directUrl; 
   if (!d || !d.id) return "#";
-  const base = `/api/download?id=${encodeURIComponent(d.id)}`;
-  return inline ? base + "&inline=1" : base;
+  return `/api/download?id=${encodeURIComponent(d.id)}`;
 }
 
 function isSupportedUrl(u) {
@@ -89,6 +90,7 @@ function renderHistory() {
   if (!h.length) { historyPanel.classList.add("hide"); return; }
   historyPanel.classList.remove("hide");
   history.innerHTML = h.map(x => {
+    // History ke liye id proxy use kar rahe hain, in case directUrl expire ho jaye
     const href = x.id ? escapeHtml(`/api/download?id=${x.id}`) : "#";
     return `<div class="historyrow">
       <div>
@@ -145,19 +147,20 @@ async function processUrl(value, autoDownload = false) {
     if (!d.id) throw new Error("Server error: no download ID.");
 
     current = d;
-    const dlUrl = buildDlUrl(d, false);
+    const dlUrl = buildDlUrl(d);
 
     name.textContent = d.filename || "media.mp4";
     meta.textContent = (d.contentType || "media") + (d.size ? " • " + size(d.size) : "");
     showPreview(d);
 
     download.href = dlUrl;
+    // Tries to force native download behavior
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
+    download.setAttribute("target", "_blank"); 
 
     result.classList.remove("hide");
     msg("Media is ready. Tap Download file.", "ok");
 
-    // Auto download
     if (autoDownload && isAutoEnabled()) {
       msg("Auto-downloading…", "ok");
       triggerDownload(d);
@@ -175,7 +178,7 @@ async function processUrl(value, autoDownload = false) {
 
 function triggerDownload(d) {
   if (!d || !d.id) return;
-  const dlUrl = buildDlUrl(d, false);
+  const dlUrl = buildDlUrl(d);
   download.href = dlUrl;
   download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
 
@@ -191,7 +194,6 @@ function triggerDownload(d) {
   bar.style.width   = "10%";
   progressPct.textContent = "10%";
 
-  // Programmatic click
   download.click();
 
   setTimeout(() => {
@@ -201,20 +203,29 @@ function triggerDownload(d) {
   }, 500);
 }
 
-/* ── Preview ── */
+/* ── Preview (Thumbnail Fix) ── */
 function showPreview(d) {
   thumb.innerHTML = "";
-  const mime = (d.contentType || "").toLowerCase();
-  if (mime.startsWith("image/")) {
+  // Agar backend se thumbnail URL mili hai, toh usko show karo
+  if (d.thumbnail) {
     const img = new Image();
-    img.src = buildDlUrl(d, true);
-    img.alt = d.filename || "preview";
+    img.src = d.thumbnail;
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "cover";
+    img.style.borderRadius = "12px";
     img.onload  = () => thumb.appendChild(img);
-    img.onerror = () => (thumb.innerHTML = "<span>◈</span>");
-  } else if (mime.startsWith("video/")) {
-    thumb.innerHTML = "<span>▶</span>";
+    img.onerror = () => (thumb.innerHTML = "<span>▶</span>");
   } else {
-    thumb.innerHTML = "<span>♪</span>";
+    // Agar thumbnail nahi hai toh purana logic (Play ya Note icon)
+    const mime = (d.contentType || "").toLowerCase();
+    if (mime.startsWith("image/")) {
+       thumb.innerHTML = "<span>◈</span>";
+    } else if (mime.startsWith("video/")) {
+      thumb.innerHTML = "<span>▶</span>";
+    } else {
+      thumb.innerHTML = "<span>♪</span>";
+    }
   }
 }
 
@@ -253,7 +264,7 @@ url.onkeydown = e => {
 /* ── Download button ── */
 download.addEventListener("click", () => {
   if (!current || !current.id) return;
-  const dlUrl = buildDlUrl(current, false);
+  const dlUrl = buildDlUrl(current);
   download.href = dlUrl;
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
 
@@ -311,26 +322,19 @@ if ("serviceWorker" in navigator) {
 
 /* ══════════════════════════════
    STARTUP LOGIC
-   1. Share target check
-   2. Auto paste check
-   3. Visibility change (jab app focus aaye)
 ══════════════════════════════ */
 async function onStartup() {
-  // Init toggle
   setAuto(isAutoEnabled());
 
-  // 1. Share target se aaya? (/share?url=...)
   const params = new URLSearchParams(window.location.search);
   const sharedUrl = params.get("url") || params.get("text") || params.get("title");
   if (sharedUrl && isSupportedUrl(sharedUrl.trim())) {
     console.log("Shared URL detected:", sharedUrl);
-    // Clean URL from address bar
     window.history.replaceState({}, "", "/");
-    await processUrl(sharedUrl.trim(), true); // Always auto-download on share
+    await processUrl(sharedUrl.trim(), true);
     return;
   }
 
-  // 2. Auto paste on startup
   if (isAutoEnabled()) {
     const autoPasted = await tryAutoPaste();
     if (autoPasted) {
@@ -344,13 +348,11 @@ async function onStartup() {
   renderHistory();
 }
 
-/* ── Visibility change: jab user app pe wapas aaye ── */
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible") return;
   if (autoProcessing) return;
   if (!isAutoEnabled()) return;
 
-  // Thoda wait karo clipboard update hone ke liye
   await new Promise(r => setTimeout(r, 300));
 
   const autoPasted = await tryAutoPaste();
