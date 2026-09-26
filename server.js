@@ -11,20 +11,13 @@ const app = express();
 
 const PORT = process.env.PORT || 10000;
 const MAX_BYTES = 250 * 1024 * 1024;
-const INSPECT_TIMEOUT = 60000;
+const INSPECT_TIMEOUT = 90000;
 const DOWNLOAD_TIMEOUT = 300000;
 const MAX_REDIRECTS = 4;
 const MAX_ACTIVE_PER_IP = 3;
 const RATE_WINDOW = 60 * 1000;
 const RATE_LIMIT = 20;
 const PUBLIC_DIR = path.join(__dirname, "public");
-
-const ALLOWED_MIME = new Set([
-  "video/mp4","video/webm","video/quicktime","video/x-matroska",
-  "audio/mpeg","audio/mp4","audio/wav","audio/webm",
-  "image/jpeg","image/png","image/webp","image/gif",
-  "application/octet-stream"
-]);
 
 const rateMap         = new Map();
 const activeMap       = new Map();
@@ -162,12 +155,10 @@ function getPlatform(urlStr) {
 function isSocialMediaUrl(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./, "");
-    // CDN URLs ko social media mat samjho
     if (
       h.includes("cdninstagram.com") || h.includes("fbcdn.net") ||
       h.includes("googlevideo.com")  || h.includes("tiktokcdn.com") ||
-      h.includes("twimg.com")        || h.includes("redd.it") ||
-      h.includes("v.redd.it")
+      h.includes("twimg.com")
     ) return false;
 
     return [
@@ -187,9 +178,9 @@ function makeDownloadId() { return crypto.randomBytes(12).toString("hex"); }
 function cacheExtraction(originalUrl, extractedData) {
   const downloadId = makeDownloadId();
   const payload = { ...extractedData, originalUrl, downloadId, createdAt: Date.now() };
-  extractionCache.set(originalUrl,        payload);
-  extractionCache.set(extractedData.url, payload);
-  extractionCache.set(downloadId,        payload);
+  extractionCache.set(originalUrl,         payload);
+  extractionCache.set(extractedData.url,   payload);
+  extractionCache.set(downloadId,          payload);
   setTimeout(() => {
     extractionCache.delete(originalUrl);
     extractionCache.delete(extractedData.url);
@@ -199,130 +190,155 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   YT-DLP EXTRACTOR - FULLY FIXED
+   URL CLEANERS
 ════════════════════════════════════════ */
-
-// YouTube ke liye clean URL banao
 function cleanYouTubeUrl(rawUrl) {
   try {
     const u = new URL(rawUrl);
-    // youtu.be short links
+    
+    // youtu.be/VIDEO_ID
     if (u.hostname.includes("youtu.be")) {
-      const videoId = u.pathname.slice(1).split("/")[0];
+      const videoId = u.pathname.slice(1).split("/")[0].split("?")[0];
       if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
     }
-    // youtube.com/shorts/ID
+    
+    // youtube.com/shorts/VIDEO_ID
     if (u.pathname.startsWith("/shorts/")) {
-      const videoId = u.pathname.split("/shorts/")[1].split("/")[0];
+      const videoId = u.pathname.split("/shorts/")[1].split("/")[0].split("?")[0];
       if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
     }
-    // Sirf v parameter rakhna hai, baaki hata do
+    
+    // youtube.com/watch?v=VIDEO_ID
     if (u.hostname.includes("youtube.com")) {
       const v = u.searchParams.get("v");
       if (v) return `https://www.youtube.com/watch?v=${v}`;
     }
+    
+    // youtube.com/live/VIDEO_ID  
+    if (u.pathname.startsWith("/live/")) {
+      const videoId = u.pathname.split("/live/")[1].split("/")[0].split("?")[0];
+      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+    }
+    
   } catch {}
   return rawUrl;
 }
 
+/* ════════════════════════════════════════
+   YT-DLP EXTRACTOR - YOUTUBE SHORTS FIX
+════════════════════════════════════════ */
 async function extractDirectVideoUrl(pageUrl) {
   console.log("[extract] Starting for:", pageUrl.slice(0, 80));
   
   const platform = getPlatform(pageUrl);
-  console.log("[extract] Platform detected:", platform);
+  console.log("[extract] Platform:", platform);
 
-  // Platform ke hisab se URL clean karo
   let cleanUrl = pageUrl;
   if (platform === "youtube") {
     cleanUrl = cleanYouTubeUrl(pageUrl);
-    console.log("[extract] Clean YouTube URL:", cleanUrl);
+    console.log("[extract] Cleaned URL:", cleanUrl);
   }
 
-  // Strategies in order of preference
-  const strategies = getStrategiesForPlatform(platform, cleanUrl);
-  
+  const strategies = buildStrategies(platform, cleanUrl);
   let lastError = null;
-  
+
   for (let i = 0; i < strategies.length; i++) {
-    const strategy = strategies[i];
-    console.log(`[extract] Trying strategy ${i + 1}/${strategies.length}: ${strategy.name}`);
-    
+    const s = strategies[i];
+    console.log(`[extract] Strategy ${i+1}/${strategies.length}: ${s.name}`);
     try {
-      const result = await tryExtraction(cleanUrl, strategy.options);
-      if (result) {
-        console.log("[extract] Success with strategy:", strategy.name);
+      const result = await runExtraction(cleanUrl, s.options);
+      if (result && result.url) {
+        console.log("[extract] ✓ Success:", s.name);
         return result;
       }
     } catch (e) {
       lastError = e;
-      console.log(`[extract] Strategy ${strategy.name} failed:`, e.message.slice(0, 100));
+      const msg = e.message || "";
+      console.log(`[extract] ✗ ${s.name}: ${msg.slice(0, 120)}`);
+      
+      // Agar video exist hi nahi karta toh aage try mat karo
+      if (
+        msg.includes("Video unavailable") ||
+        msg.includes("Private video") ||
+        msg.includes("has been removed") ||
+        msg.includes("age-restricted") ||
+        msg.includes("not available")
+      ) {
+        throw new Error("Video private, removed, ya age-restricted hai. Download possible nahi.");
+      }
     }
   }
-  
-  throw new Error(
-    platform === "youtube" 
-      ? "YouTube video download nahi ho pa raha. Bot protection active hai. Thodi der baad try karein."
-      : `Video extract nahi ho pa raha. Video private, age-restricted ya unsupported ho sakta hai. (${lastError?.message?.slice(0, 80) || 'Unknown error'})`
-  );
+
+  // Platform specific error
+  if (platform === "youtube") {
+    throw new Error("YouTube ne download block kar diya. yt-dlp update karo ya thodi der baad try karo.");
+  }
+  throw new Error(`Video extract nahi hua: ${lastError?.message?.slice(0, 100) || "Unknown error"}`);
 }
 
-function getStrategiesForPlatform(platform, url) {
-  const commonHeaders = [
-    `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`,
-    `Accept-Language: en-US,en;q=0.9`,
-    `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`
-  ];
-
+function buildStrategies(platform, url) {
   if (platform === "youtube") {
     return [
+      // Strategy 1: Android client - SABSE BEST for Shorts
       {
-        name: "YouTube-Android",
+        name: "Android-Client",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best[ext=mp4]/best",
-          extractor_args: "youtube:player_client=android",
-          addHeader: commonHeaders
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+          extractorArgs:       "youtube:player_client=android,web",
         }
       },
+      // Strategy 2: iOS client
       {
-        name: "YouTube-iOS",
+        name: "iOS-Client",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best[ext=mp4]/best",
-          extractor_args: "youtube:player_client=ios",
-          addHeader: commonHeaders
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best[ext=mp4]/best",
+          extractorArgs:       "youtube:player_client=ios",
         }
       },
+      // Strategy 3: TV client (bot detection se bachne ke liye)
       {
-        name: "YouTube-Web",
+        name: "TV-Client",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best[ext=mp4][height<=720]/best[ext=mp4]/best",
-          addHeader: commonHeaders
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best",
+          extractorArgs:       "youtube:player_client=tv_embedded",
         }
       },
+      // Strategy 4: mweb client
       {
-        name: "YouTube-MobileWeb",
+        name: "MWeb-Client",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best",
-          extractor_args: "youtube:player_client=mweb",
-          addHeader: [
-            `User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1`,
-            `Accept-Language: en-US,en;q=0.9`
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best",
+          extractorArgs:       "youtube:player_client=mweb",
+          addHeader:           [
+            "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
           ]
+        }
+      },
+      // Strategy 5: Default web (last resort)
+      {
+        name: "Web-Default",
+        options: {
+          dumpSingleJson:      true,
+          noCheckCertificates: true,
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best[height<=720]/best",
         }
       }
     ];
@@ -331,30 +347,29 @@ function getStrategiesForPlatform(platform, url) {
   if (platform === "instagram") {
     return [
       {
-        name: "Instagram-Main",
+        name: "Instagram-Chrome",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best",
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best",
           addHeader: [
-            ...commonHeaders,
-            `Referer: https://www.instagram.com/`
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language: en-US,en;q=0.9",
+            "Referer: https://www.instagram.com/"
           ]
         }
       },
       {
         name: "Instagram-Mobile",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best",
+          noWarnings:          true,
+          format:              "best",
           addHeader: [
-            `User-Agent: Instagram 219.0.0.12.117 Android (30/11; 420dpi; 1080x2154; samsung; SM-G991B; o1s; exynos2100)`,
-            `Accept-Language: en-US`
+            "User-Agent: Instagram 219.0.0.12.117 Android (30/11; 420dpi; 1080x2154; samsung; SM-G991B; o1s; exynos2100)",
           ]
         }
       }
@@ -366,12 +381,15 @@ function getStrategiesForPlatform(platform, url) {
       {
         name: "TikTok-Main",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best",
-          addHeader: commonHeaders
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best",
+          addHeader: [
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer: https://www.tiktok.com/"
+          ]
         }
       }
     ];
@@ -382,100 +400,89 @@ function getStrategiesForPlatform(platform, url) {
       {
         name: "Facebook-Main",
         options: {
-          dumpSingleJson: true,
+          dumpSingleJson:      true,
           noCheckCertificates: true,
-          noWarnings: true,
-          noPlaylist: true,
-          format: "best",
-          addHeader: commonHeaders
+          noWarnings:          true,
+          noPlaylist:          true,
+          format:              "best",
+          addHeader: [
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          ]
         }
       }
     ];
   }
 
-  // Default strategy for other platforms
+  // Generic
   return [
     {
       name: "Generic-Best",
       options: {
-        dumpSingleJson: true,
+        dumpSingleJson:      true,
         noCheckCertificates: true,
-        noWarnings: true,
-        noPlaylist: true,
-        format: "best[ext=mp4]/best",
-        addHeader: commonHeaders
-      }
-    },
-    {
-      name: "Generic-Fallback",
-      options: {
-        dumpSingleJson: true,
-        noCheckCertificates: true,
-        noWarnings: true,
-        format: "best",
-        addHeader: commonHeaders
+        noWarnings:          true,
+        noPlaylist:          true,
+        format:              "best[ext=mp4]/best",
       }
     }
   ];
 }
 
-async function tryExtraction(url, options) {
+async function runExtraction(url, options) {
   const output = await youtubedl(url, options);
-  
-  if (!output) throw new Error("No output from yt-dlp");
-  
+  if (!output) throw new Error("Empty output from yt-dlp");
+
   let directUrl = null;
-  let headers = {};
-  let thumbnail = output.thumbnail || null;
-  let title = output.title || output.id || "Video";
+  let headers   = {};
 
-  // Direct URL check
-  if (output.url && output.url.startsWith("http")) {
+  // 1. Direct URL
+  if (output.url && typeof output.url === "string" && output.url.startsWith("http")) {
     directUrl = output.url;
-    headers = { ...(output.http_headers || {}) };
+    headers   = { ...(output.http_headers || {}) };
   }
 
-  // Formats se URL dhundo agar direct nahi mila
-  if (!directUrl && output.formats && output.formats.length > 0) {
-    // Pehle aise format dhundo jisme video aur audio dono ho
-    const formats = output.formats.filter(f => f.url && f.url.startsWith("http"));
-    
-    // Best combined format
-    const combined = formats
-      .filter(f => f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none")
-      .sort((a, b) => (b.filesize || b.tbr || 0) - (a.filesize || a.tbr || 0));
-    
-    if (combined.length > 0) {
-      directUrl = combined[0].url;
-      headers = { ...(combined[0].http_headers || {}) };
-    } else {
-      // Koi bhi URL le lo
-      const anyFormat = formats.sort((a, b) => (b.filesize || b.tbr || 0) - (a.filesize || a.tbr || 0));
-      if (anyFormat.length > 0) {
-        directUrl = anyFormat[0].url;
-        headers = { ...(anyFormat[0].http_headers || {}) };
-      }
+  // 2. requested_formats (merged streams)
+  if (!directUrl && output.requested_formats?.length) {
+    // Video stream prefer karo
+    const vf = output.requested_formats.find(f => f.url && f.vcodec && f.vcodec !== "none");
+    if (vf) {
+      directUrl = vf.url;
+      headers   = { ...(vf.http_headers || {}) };
     }
   }
 
-  // Requested formats check
-  if (!directUrl && output.requested_formats && output.requested_formats.length > 0) {
-    const rf = output.requested_formats.find(f => f.url);
-    if (rf) {
-      directUrl = rf.url;
-      headers = { ...(rf.http_headers || {}) };
+  // 3. formats array se best dhundo
+  if (!directUrl && output.formats?.length) {
+    const validFmts = output.formats
+      .filter(f => f.url && typeof f.url === "string" && f.url.startsWith("http"))
+      .reverse(); // best quality pehle
+
+    // Combined video+audio prefer karo
+    const combined = validFmts.find(
+      f => f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none"
+    );
+    const videoOnly = validFmts.find(f => f.vcodec && f.vcodec !== "none");
+    const any       = validFmts[0];
+
+    const chosen = combined || videoOnly || any;
+    if (chosen) {
+      directUrl = chosen.url;
+      headers   = { ...(chosen.http_headers || {}) };
     }
   }
 
-  if (!directUrl) throw new Error("No valid stream URL found in output");
+  if (!directUrl) throw new Error("No stream URL in yt-dlp output");
 
-  // Host header hata do (conflicts create karta hai)
+  // Host header remove (causes issues)
   delete headers["Host"];
   delete headers["host"];
 
-  console.log("[extract] Direct URL found:", directUrl.slice(0, 80));
-  
-  return { url: directUrl, title, thumbnail, headers };
+  return {
+    url:       directUrl,
+    title:     output.title || output.id || "Video",
+    thumbnail: output.thumbnail || null,
+    headers
+  };
 }
 
 /* ════════════════════════════════════════
@@ -516,7 +523,7 @@ async function fetchCDN(targetUrl, headers, signal) {
 }
 
 /* ════════════════════════════════════════
-   STREAM HELPER
+   STREAM
 ════════════════════════════════════════ */
 async function streamToResponse(response, res, controller, startTime) {
   const contentLength = Number(response.headers.get("content-length") || 0);
@@ -524,7 +531,6 @@ async function streamToResponse(response, res, controller, startTime) {
     throw Object.assign(new Error("File exceeds 250 MB limit."), { status: 413 });
 
   if (!response.body) throw new Error("Media stream unavailable.");
-
   if (contentLength) res.setHeader("Content-Length", String(contentLength));
 
   const nodeStream = Readable.fromWeb
@@ -553,7 +559,7 @@ async function streamToResponse(response, res, controller, startTime) {
         res.end();
         const secs = ((Date.now() - startTime) / 1000).toFixed(1);
         const mbps = (total / 1024 / 1024 / parseFloat(secs)).toFixed(2);
-        console.log(`[dl] done ${(total/1024/1024).toFixed(1)}MB in ${secs}s @ ${mbps} MB/s`);
+        console.log(`[dl] done ${(total/1024/1024).toFixed(1)}MB in ${secs}s @ ${mbps}MB/s`);
       }
       cb();
     }
@@ -570,48 +576,45 @@ async function streamToResponse(response, res, controller, startTime) {
    ROUTES
 ════════════════════════════════════════ */
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "QuickSave", version: "5.0" })
+  res.json({ ok: true, service: "QuickSave", version: "5.1" })
 );
 
 app.get("/share", (req, res) => {
-  const shared =
-    (req.query.url || req.query.text || req.query.title || "").trim();
+  const shared = (req.query.url || req.query.text || req.query.title || "").trim();
   console.log("[share] received:", shared.slice(0, 120));
-  if (shared) {
-    return res.redirect(302, `/?url=${encodeURIComponent(shared)}`);
-  }
-  return res.redirect(302, "/");
+  return shared
+    ? res.redirect(302, `/?url=${encodeURIComponent(shared)}`)
+    : res.redirect(302, "/");
 });
 
-/* ════════════════════════════════════════
-   INSPECT
-════════════════════════════════════════ */
+/* ── INSPECT ── */
 app.post("/api/inspect", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
   if (!checkRateLimit(ip))
-    return res.status(429).json({ ok: false, message: "Too many requests." });
+    return res.status(429).json({ ok: false, message: "Too many requests. Please wait." });
 
   try {
     const rawUrl = req.body?.url;
-    let url         = await validateUrl(rawUrl);
-    let targetUrl   = url.toString();
-    let extractedTitle = null, customHeaders = {}, useCDNFetch = false, downloadId = null, thumbnail = null;
+    let urlObj      = await validateUrl(rawUrl);
+    let targetUrl   = urlObj.toString();
+    let extractedTitle = null, customHeaders = {}, useCDNFetch = false;
+    let downloadId  = null, thumbnail = null;
 
     if (extractionCache.has(targetUrl)) {
       const c = extractionCache.get(targetUrl);
       targetUrl = c.url; extractedTitle = c.title; thumbnail = c.thumbnail;
       customHeaders = c.headers || {}; downloadId = c.downloadId; useCDNFetch = true;
-      console.log("[inspect] cache hit for:", targetUrl.slice(0, 60));
+      console.log("[inspect] cache hit");
 
     } else if (isSocialMediaUrl(targetUrl)) {
-      console.log("[inspect] extracting:", targetUrl.slice(0, 80));
+      console.log("[inspect] social url detected:", targetUrl.slice(0, 80));
       const data = await extractDirectVideoUrl(targetUrl);
       const c    = cacheExtraction(targetUrl, data);
       targetUrl = c.url; extractedTitle = c.title; thumbnail = c.thumbnail;
       customHeaders = c.headers || {}; downloadId = c.downloadId; useCDNFetch = true;
 
     } else {
-      const c    = cacheExtraction(targetUrl, { url: targetUrl, title: null, headers: {}, thumbnail: null });
+      const c = cacheExtraction(targetUrl, { url: targetUrl, title: null, headers: {}, thumbnail: null });
       downloadId = c.downloadId;
     }
 
@@ -640,8 +643,7 @@ app.post("/api/inspect", async (req, res) => {
         try { await response.body?.cancel(); } catch {}
       }
 
-      // Agar content type application/octet-stream hai toh video/mp4 assume karo
-      if (contentType === "application/octet-stream" && extractedTitle) {
+      if (contentType === "application/octet-stream" && (extractedTitle || useCDNFetch)) {
         contentType = "video/mp4";
       }
 
@@ -651,11 +653,11 @@ app.post("/api/inspect", async (req, res) => {
 
       if (!isValidMediaType(contentType))
         return res.status(400).json({ ok: false, type: "unsupported",
-          message: "This URL does not return a valid media file." });
+          message: "Valid media file nahi mila is URL par." });
 
       if (contentLength && contentLength > MAX_BYTES)
         return res.status(400).json({ ok: false, type: "too-large",
-          message: "File is larger than 250 MB." });
+          message: "File 250 MB se badi hai." });
 
       const filename = filenameFromUrl(targetUrl, contentType, extractedTitle);
       console.log("[inspect] ok:", filename, contentType, contentLength);
@@ -667,25 +669,23 @@ app.post("/api/inspect", async (req, res) => {
         downloadUrl: `/api/download?id=${downloadId}`,
         directUrl:   targetUrl,
         url:         targetUrl,
-        originalUrl: url.toString(),
+        originalUrl: urlObj.toString(),
         contentType: contentType || "video/mp4",
         size:        contentLength || null,
         filename,
-        thumbnail:   thumbnail
+        thumbnail
       });
 
     } finally { clearTimeout(timer); }
 
   } catch (e) {
-    console.error("Inspect error:", e.message);
+    console.error("[inspect] error:", e.message);
     return res.status(400).json({ ok: false, type: "error",
-      message: e.message || "Unable to process this URL." });
+      message: e.message || "URL process nahi ho pa raha." });
   }
 });
 
-/* ════════════════════════════════════════
-   DOWNLOAD
-════════════════════════════════════════ */
+/* ── DOWNLOAD ── */
 app.get("/api/download", async (req, res) => {
   const ip = cleanIp(req.headers["x-forwarded-for"] || req.socket.remoteAddress);
   if (!checkRateLimit(ip))
@@ -697,31 +697,25 @@ app.get("/api/download", async (req, res) => {
 
   try {
     let targetUrl = null, extractedTitle = null, customHeaders = {}, originalSocialUrl = null;
-
     const idParam = req.query.id ? String(req.query.id).trim() : null;
 
     if (idParam) {
       const cached = extractionCache.get(idParam);
       if (!cached)
         return res.status(410).json({ ok: false,
-          message: "Link expired. Please tap 'Get media' again." });
+          message: "Link expired. Please 'Get media' again tap karo." });
       targetUrl         = cached.url;
       extractedTitle    = cached.title;
       customHeaders     = cached.headers || {};
       originalSocialUrl = cached.originalUrl;
-      console.log("[dl] id=", idParam, "url=", targetUrl.slice(0, 80));
 
     } else {
       let rawUrl = req.query.url;
       if (!rawUrl)
-        return res.status(400).json({ ok: false, message: "id or url required." });
-
+        return res.status(400).json({ ok: false, message: "id ya url required hai." });
       for (let i = 0; i < 2; i++) {
-        try { const d = decodeURIComponent(rawUrl); if (d === rawUrl) break; rawUrl = d; }
-        catch { break; }
+        try { const d = decodeURIComponent(rawUrl); if (d === rawUrl) break; rawUrl = d; } catch { break; }
       }
-      console.log("[dl] url=", String(rawUrl).slice(0, 120));
-
       if (extractionCache.has(rawUrl)) {
         const c = extractionCache.get(rawUrl);
         targetUrl = c.url; extractedTitle = c.title;
@@ -745,15 +739,11 @@ app.get("/api/download", async (req, res) => {
     try {
       let response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
       let contentType = getRawContentType(response);
-      
-      // application/octet-stream ko valid maano
       if (contentType === "application/octet-stream") contentType = "video/mp4";
 
       if (!response.ok || !isValidMediaType(contentType)) {
-        console.log("[dl] CDN bad:", response.status, contentType);
         if (originalSocialUrl && isSocialMediaUrl(originalSocialUrl)) {
           try {
-            console.log("[dl] re-extracting:", originalSocialUrl.slice(0, 80));
             const fresh = await extractDirectVideoUrl(originalSocialUrl);
             const c     = cacheExtraction(originalSocialUrl, fresh);
             targetUrl = c.url; customHeaders = c.headers || {}; extractedTitle = fresh.title;
@@ -762,12 +752,12 @@ app.get("/api/download", async (req, res) => {
             if (contentType === "application/octet-stream") contentType = "video/mp4";
           } catch {
             return res.status(502).json({ ok: false,
-              message: "Media expired. Please tap 'Get media' again." });
+              message: "Media expire ho gaya. Please 'Get media' again tap karo." });
           }
         }
         if (!response.ok || !isValidMediaType(contentType))
           return res.status(502).json({ ok: false,
-            message: `Bad media response (${response.status}). Please try again.` });
+            message: `Bad media response (${response.status}).` });
       }
 
       const filename        = filenameFromUrl(targetUrl, contentType, extractedTitle);
@@ -776,26 +766,25 @@ app.get("/api/download", async (req, res) => {
       const wantInline      = req.query.inline === "1";
 
       res.status(200);
-      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Type",          contentType);
       res.setHeader("Content-Disposition",
         wantInline
           ? `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
           : `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
       );
-      res.setHeader("Cache-Control",         "no-store");
-      res.setHeader("Accept-Ranges",         "none");
-      res.setHeader("X-Content-Type-Options","nosniff");
-      res.setHeader("Transfer-Encoding",     "chunked");
+      res.setHeader("Cache-Control",          "no-store");
+      res.setHeader("Accept-Ranges",          "none");
+      res.setHeader("X-Content-Type-Options", "nosniff");
 
       await streamToResponse(response, res, controller, startTime);
 
     } finally { clearTimeout(timer); }
 
   } catch (e) {
-    console.error("Download error:", e.message);
+    console.error("[dl] error:", e.message);
     if (!res.headersSent)
       res.status(e.status || 400).json({ ok: false,
-        message: e.name === "AbortError" ? "Download timed out." : e.message || "Unable to download." });
+        message: e.name === "AbortError" ? "Download timeout." : e.message || "Download failed." });
     else res.destroy();
   } finally {
     releaseDownload(ip);
@@ -817,7 +806,7 @@ app.use((err, _req, res, next) => {
    START
 ════════════════════════════════════════ */
 const server = app.listen(PORT, "0.0.0.0", () =>
-  console.log(`QuickSave v5.0 running on port ${PORT}`)
+  console.log(`QuickSave v5.1 running on port ${PORT}`)
 );
 
 function shutdown(sig) {
