@@ -1,0 +1,17 @@
+const express = require('express');
+const path = require('path');
+const app = express();
+
+// Render deployment ke liye dynamic port assign karna zaroori hai
+const PORT = process.env.PORT || 3000;
+
+// Ye line sabse important hai: ye public folder ko static banati hai 
+// taaki index.html aur styles.css browser mein load ho sake
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Agar app.js mein backend fetch requests hain, toh yahan unke APIs add honge
+// Example: app.post('/api/download', (req, res) => { ... });
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
