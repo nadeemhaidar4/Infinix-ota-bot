@@ -4,14 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080b16">
-  <meta name="description" content="QuickSave — Save videos from Instagram, Facebook, Twitter">
+  
+  <!-- MONETAG VERIFICATION - YAHAN HAI -->
+  <meta name="monetag" content="cc536f6250a6995ca1149160b2612123">
+  
+  <meta name="description" content="Download Instagram Reels, Facebook videos and Twitter clips free. Fast, easy, no signup required.">
+  <meta name="keywords" content="instagram video downloader, facebook video download, twitter video save, reels downloader free">
+  <meta name="robots" content="index, follow">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="QuickSave">
+  <meta property="og:title" content="QuickSave - Free Instagram Facebook Twitter Video Downloader">
+  <meta property="og:description" content="Download Instagram Reels, Facebook videos, Twitter clips for free. No signup needed.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="/icon-192.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg">
   <link rel="apple-touch-icon" href="/icon-192.png">
-  <title>QuickSave — Media Saver</title>
+  <title>QuickSave — Free Instagram Facebook Twitter Video Downloader</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -45,11 +55,11 @@
 
   <section class="hero">
     <div class="tag">● INSTAGRAM • FACEBOOK • TWITTER/X</div>
-    <h1>Save your media.<br><i>In a few taps.</i></h1>
-    <p>Paste a link or share directly from any app. Auto-paste detects your clipboard automatically.</p>
+    <h1>Save any video.<br><i>In seconds.</i></h1>
+    <p>Download Instagram Reels, Facebook videos, and Twitter clips for free. No signup. No watermark.</p>
 
     <div id="drop" class="box">
-      <div class="droptext">Drop a media URL here</div>
+      <div class="droptext">🔗 Drop or paste a video link here</div>
       <div class="input">
         <span>⌁</span>
         <input
@@ -62,8 +72,10 @@
         >
         <button id="paste" type="button">Paste</button>
       </div>
-      <button id="go" class="go" type="button">Get media <strong>→</strong></button>
-      <div class="hint">✓ Instagram • Facebook • Twitter / X</div>
+      <button id="go" class="go" type="button">
+        Get media <strong>→</strong>
+      </button>
+      <div class="hint">✓ Free • No Signup • No Watermark</div>
     </div>
 
     <div id="status" class="status hide"></div>
@@ -84,8 +96,18 @@
         </div>
         <i><b id="bar"></b></i>
       </div>
-      <a id="download" class="download" href="#">⬇ Download file</a>
+      <a id="download" class="download" href="#">
+        ⬇ Download Video Free
+      </a>
+      <p class="dl-note">
+        Having trouble? <a href="#" id="retryBtn">Try again</a>
+      </p>
     </section>
+
+    <div class="ad-wrap hide" id="adAfterDl">
+      <span class="ad-label">Advertisement</span>
+      <div class="ad-rect"></div>
+    </div>
 
     <section id="historyPanel" class="history hide">
       <div class="sectionhead">
@@ -95,34 +117,89 @@
       <div id="history"></div>
     </section>
 
+    <section class="howto">
+      <h2>How to Download Instagram Videos Free?</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-text">
+            <strong>Copy the link</strong>
+            <span>Open Instagram, Facebook, or Twitter. Tap Share → Copy Link</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-text">
+            <strong>Paste here</strong>
+            <span>Tap "Paste" button above or use Auto-paste feature</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-text">
+            <strong>Download free</strong>
+            <span>Click "Download Video Free" — saved to your device instantly</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <div class="features">
       <article>
         <b>📸</b>
-        <strong>Instagram</strong>
-        <span>Reels, posts, stories — all saved instantly.</span>
+        <strong>Instagram Downloader</strong>
+        <span>Download Reels, posts, and IGTV videos in HD quality instantly.</span>
       </article>
       <article>
         <b>👥</b>
-        <strong>Facebook</strong>
-        <span>Public videos downloaded in seconds.</span>
+        <strong>Facebook Downloader</strong>
+        <span>Save public Facebook videos in high quality with one click.</span>
       </article>
       <article>
         <b>🐦</b>
-        <strong>Twitter / X</strong>
-        <span>Save tweets with video easily.</span>
+        <strong>Twitter / X Downloader</strong>
+        <span>Download Twitter videos and GIFs directly to your device.</span>
       </article>
     </div>
 
+    <section class="faq">
+      <h2>Frequently Asked Questions</h2>
+      <details>
+        <summary>Is QuickSave completely free?</summary>
+        <p>Yes! QuickSave is 100% free. No hidden charges, no subscription, no signup required.</p>
+      </details>
+      <details>
+        <summary>Can I download Instagram Reels without watermark?</summary>
+        <p>Yes! All videos downloaded via QuickSave are watermark-free in original quality.</p>
+      </details>
+      <details>
+        <summary>How to download Facebook videos?</summary>
+        <p>Copy the Facebook video URL, paste it in the box above, and click "Get media". That's it!</p>
+      </details>
+      <details>
+        <summary>Does it work on iPhone and Android?</summary>
+        <p>Yes! QuickSave works on all devices — iPhone, Android, and desktop browsers.</p>
+      </details>
+      <details>
+        <summary>Are my downloads private?</summary>
+        <p>Yes. We don't store any URLs or videos. Everything is processed temporarily and deleted immediately.</p>
+      </details>
+    </section>
+
     <div class="notice">
-      <b>Use responsibly.</b> Only download media you own or have permission to save.
+      <b>⚠ Use responsibly.</b> Only download media you own or have explicit permission to save. Respect copyright laws.
     </div>
   </section>
 
   <footer>
-    <span>© 2026 QuickSave</span>
-    <span>Authorized media only</span>
+    <span>© 2026 QuickSave — Free Video Downloader</span>
+    <div class="footer-links">
+      <a href="/privacy.html">Privacy Policy</a>
+      <a href="/terms.html">Terms of Use</a>
+    </div>
   </footer>
 </main>
+
 <script src="/app.js"></script>
 </body>
 </html>
