@@ -1,14 +1,14 @@
-/* QuickSave SW v5.0 - With Monetag Push Notifications */
+/* QuickSave SW v5.0 - Monetag Multitag */
 
-/* ── Monetag Push Notification Config ── */
+/* Monetag Config - Multitag Zone */
 self.options = {
     "domain": "5gvci.com",
-    "zoneId": 11897090
+    "zoneId": 11897265
 }
 self.lary = ""
 importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw')
 
-/* ── QuickSave Cache Config ── */
+/* QuickSave Cache */
 const CACHE = "quicksave-v5";
 
 self.addEventListener("install", e => {
@@ -26,9 +26,7 @@ self.addEventListener("activate", e => {
 });
 
 self.addEventListener("fetch", e => {
-  /* API requests cache mat karo */
   if (e.request.url.includes("/api/")) return;
-  
   e.respondWith(
     fetch(e.request).catch(() => caches.match(e.request))
   );
