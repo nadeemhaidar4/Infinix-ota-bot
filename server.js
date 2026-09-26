@@ -183,7 +183,7 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   YT-DLP EXTRACTOR (Modified to get thumbnail)
+   YT-DLP EXTRACTOR (AUDIO FIX & IG HEADERS)
 ════════════════════════════════════════ */
 async function extractDirectVideoUrl(pageUrl) {
   console.log("[extract] Starting for:", pageUrl.slice(0, 80));
@@ -192,9 +192,14 @@ async function extractDirectVideoUrl(pageUrl) {
       dumpSingleJson:      true,
       noCheckCertificates: true,
       noWarnings:          true,
-      format: "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best/b",
-      mergeOutputFormat: "mp4",
-      noPlaylist: true,
+      // AUDIO FIX: 'best' ensures we get a single file that has both video and audio merged
+      format: "best[ext=mp4]/best",
+      // INSTAGRAM FIX: Added browser headers to bypass simple bot protections
+      addHeader: [
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language: en-US,en;q=0.9"
+      ]
     });
 
     if (!output) throw new Error("No output from yt-dlp.");
@@ -203,17 +208,10 @@ async function extractDirectVideoUrl(pageUrl) {
     let headers   = { ...(output.http_headers || {}) };
     delete headers["Host"]; delete headers["host"];
 
-    if (!directUrl && output.requested_formats?.length) {
-      const fmt = output.requested_formats.find(f => f.url) || output.requested_formats[0];
-      if (fmt) {
-        directUrl = fmt.url;
-        headers   = { ...(fmt.http_headers || {}) };
-        delete headers["Host"]; delete headers["host"];
-      }
-    }
-
+    // Fallback: search for a format that specifically has both video (vcodec) and audio (acodec)
     if (!directUrl && output.formats?.length) {
-      const fmt = output.formats.filter(f => f.url).pop();
+      const fmt = output.formats.reverse().find(f => f.url && f.vcodec !== 'none' && f.acodec !== 'none') 
+                  || output.formats.filter(f => f.url).pop();
       if (fmt) {
         directUrl = fmt.url;
         headers   = { ...(fmt.http_headers || {}) };
@@ -223,14 +221,13 @@ async function extractDirectVideoUrl(pageUrl) {
 
     if (!directUrl) throw new Error("Could not find stream URL in yt-dlp output.");
 
-    // Yahan thumbnail extract kar rahe hain
     let thumbnail = output.thumbnail || null;
     
     console.log("[extract] Success:", directUrl.slice(0, 80));
     return {
       url:    directUrl,
       title:  output.title || output.id || "Video",
-      thumbnail: thumbnail, // Add thumbnail to response
+      thumbnail: thumbnail,
       headers
     };
   } catch (e) {
@@ -328,7 +325,7 @@ async function streamToResponse(response, res, controller, startTime) {
 }
 
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "QuickSave", version: "4.1" })
+  res.json({ ok: true, service: "QuickSave", version: "4.5" })
 );
 
 app.get("/share", (req, res) => {
@@ -418,13 +415,13 @@ app.post("/api/inspect", async (req, res) => {
         type:        "media",
         id:          downloadId,
         downloadUrl: `/api/download?id=${downloadId}`,
-        directUrl:   targetUrl, // Direct url passed to frontend for speed
+        directUrl:   targetUrl, 
         url:         targetUrl,
         originalUrl: url.toString(),
         contentType: contentType || "video/mp4",
         size:        contentLength || null,
         filename,
-        thumbnail:   thumbnail // Thumbnail URL passed to frontend
+        thumbnail:   thumbnail 
       });
 
     } finally { clearTimeout(timer); }
@@ -566,7 +563,7 @@ app.use((err, _req, res, next) => {
    START
 ════════════════════════════════════════ */
 const server = app.listen(PORT, "0.0.0.0", () =>
-  console.log(`QuickSave v4.1 running on port ${PORT}`)
+  console.log(`QuickSave v4.5 running on port ${PORT}`)
 );
 
 function shutdown(sig) {
