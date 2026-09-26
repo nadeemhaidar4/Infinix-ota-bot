@@ -143,13 +143,10 @@ function isValidMediaType(ct) {
 
 /* ════════════════════════════════════════
    PLATFORM DETECTION
-   Instagram, YouTube, TikTok, Facebook,
-   Twitter/X — sabhi supported
 ════════════════════════════════════════ */
 function isSocialMediaUrl(urlStr) {
   try {
     const h = new URL(urlStr).hostname.replace(/^www\./, "");
-    // CDN domains — directly fetchable, no yt-dlp needed
     if (
       h.includes("cdninstagram.com") || h.includes("fbcdn.net") ||
       h.includes("googlevideo.com")  || h.includes("tiktokcdn.com") ||
@@ -174,10 +171,9 @@ function makeDownloadId() { return crypto.randomBytes(12).toString("hex"); }
 function cacheExtraction(originalUrl, extractedData) {
   const downloadId = makeDownloadId();
   const payload = { ...extractedData, originalUrl, downloadId, createdAt: Date.now() };
-  extractionCache.set(originalUrl,       payload);
+  extractionCache.set(originalUrl,        payload);
   extractionCache.set(extractedData.url, payload);
   extractionCache.set(downloadId,        payload);
-  // 10 min TTL
   setTimeout(() => {
     extractionCache.delete(originalUrl);
     extractionCache.delete(extractedData.url);
@@ -187,9 +183,7 @@ function cacheExtraction(originalUrl, extractedData) {
 }
 
 /* ════════════════════════════════════════
-   YT-DLP EXTRACTOR
-   Supports: Instagram, YouTube, TikTok,
-   Facebook, Twitter/X, Vimeo, etc.
+   YT-DLP EXTRACTOR (Modified to get thumbnail)
 ════════════════════════════════════════ */
 async function extractDirectVideoUrl(pageUrl) {
   console.log("[extract] Starting for:", pageUrl.slice(0, 80));
@@ -198,12 +192,8 @@ async function extractDirectVideoUrl(pageUrl) {
       dumpSingleJson:      true,
       noCheckCertificates: true,
       noWarnings:          true,
-      // Best single video stream
-      // For YouTube: best mp4 video+audio merged
       format: "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best/b",
-      // Merge if needed
       mergeOutputFormat: "mp4",
-      // No playlist
       noPlaylist: true,
     });
 
@@ -213,9 +203,7 @@ async function extractDirectVideoUrl(pageUrl) {
     let headers   = { ...(output.http_headers || {}) };
     delete headers["Host"]; delete headers["host"];
 
-    // Requested formats se try karo (YouTube ke liye)
     if (!directUrl && output.requested_formats?.length) {
-      // Best video format prefer karo
       const fmt = output.requested_formats.find(f => f.url) || output.requested_formats[0];
       if (fmt) {
         directUrl = fmt.url;
@@ -224,7 +212,6 @@ async function extractDirectVideoUrl(pageUrl) {
       }
     }
 
-    // Formats array fallback
     if (!directUrl && output.formats?.length) {
       const fmt = output.formats.filter(f => f.url).pop();
       if (fmt) {
@@ -236,10 +223,14 @@ async function extractDirectVideoUrl(pageUrl) {
 
     if (!directUrl) throw new Error("Could not find stream URL in yt-dlp output.");
 
+    // Yahan thumbnail extract kar rahe hain
+    let thumbnail = output.thumbnail || null;
+    
     console.log("[extract] Success:", directUrl.slice(0, 80));
     return {
       url:    directUrl,
       title:  output.title || output.id || "Video",
+      thumbnail: thumbnail, // Add thumbnail to response
       headers
     };
   } catch (e) {
@@ -267,7 +258,6 @@ async function fetchSafe(initialUrl, options = {}, redirectCount = 0) {
   return response;
 }
 
-// CDN fetch — NO Range headers ever
 async function fetchCDN(targetUrl, headers, signal) {
   const h = {
     "User-Agent":      UA,
@@ -337,25 +327,16 @@ async function streamToResponse(response, res, controller, startTime) {
   }
 }
 
-/* ════════════════════════════════════════
-   HEALTH
-════════════════════════════════════════ */
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "QuickSave", version: "4.0" })
+  res.json({ ok: true, service: "QuickSave", version: "4.1" })
 );
 
-/* ════════════════════════════════════════
-   SHARE TARGET
-   manifest.webmanifest share_target action
-   Instagram/any app se share karoge to
-   yahan aayega
-════════════════════════════════════════ */
 app.get("/share", (req, res) => {
   const shared =
     (req.query.url || req.query.text || req.query.title || "").trim();
   console.log("[share] received:", shared.slice(0, 120));
   if (shared) {
-    return res.redirect(302, `/?shared=${encodeURIComponent(shared)}`);
+    return res.redirect(302, `/?url=${encodeURIComponent(shared)}`);
   }
   return res.redirect(302, "/");
 });
@@ -372,11 +353,11 @@ app.post("/api/inspect", async (req, res) => {
     const rawUrl = req.body?.url;
     let url         = await validateUrl(rawUrl);
     let targetUrl   = url.toString();
-    let extractedTitle = null, customHeaders = {}, useCDNFetch = false, downloadId = null;
+    let extractedTitle = null, customHeaders = {}, useCDNFetch = false, downloadId = null, thumbnail = null;
 
     if (extractionCache.has(targetUrl)) {
       const c = extractionCache.get(targetUrl);
-      targetUrl = c.url; extractedTitle = c.title;
+      targetUrl = c.url; extractedTitle = c.title; thumbnail = c.thumbnail;
       customHeaders = c.headers || {}; downloadId = c.downloadId; useCDNFetch = true;
       console.log("[inspect] cache hit for:", targetUrl.slice(0, 60));
 
@@ -384,11 +365,11 @@ app.post("/api/inspect", async (req, res) => {
       console.log("[inspect] extracting:", targetUrl.slice(0, 80));
       const data = await extractDirectVideoUrl(targetUrl);
       const c    = cacheExtraction(targetUrl, data);
-      targetUrl = c.url; extractedTitle = c.title;
+      targetUrl = c.url; extractedTitle = c.title; thumbnail = c.thumbnail;
       customHeaders = c.headers || {}; downloadId = c.downloadId; useCDNFetch = true;
 
     } else {
-      const c    = cacheExtraction(targetUrl, { url: targetUrl, title: null, headers: {} });
+      const c    = cacheExtraction(targetUrl, { url: targetUrl, title: null, headers: {}, thumbnail: null });
       downloadId = c.downloadId;
     }
 
@@ -396,7 +377,6 @@ app.post("/api/inspect", async (req, res) => {
     const timer      = setTimeout(() => controller.abort(), INSPECT_TIMEOUT);
 
     try {
-      // HEAD check
       let response = null;
       try {
         const h = { "User-Agent": UA, "Accept": "*/*", ...customHeaders };
@@ -409,7 +389,6 @@ app.post("/api/inspect", async (req, res) => {
       let contentType   = response ? getRawContentType(response) : "";
       let contentLength = response ? Number(response.headers.get("content-length") || 0) : 0;
 
-      // HEAD failed ya invalid type — GET karo
       if (!response || !response.ok || !isValidMediaType(contentType)) {
         response = useCDNFetch
           ? await fetchCDN(targetUrl, customHeaders, controller.signal)
@@ -439,11 +418,13 @@ app.post("/api/inspect", async (req, res) => {
         type:        "media",
         id:          downloadId,
         downloadUrl: `/api/download?id=${downloadId}`,
+        directUrl:   targetUrl, // Direct url passed to frontend for speed
         url:         targetUrl,
         originalUrl: url.toString(),
         contentType: contentType || "video/mp4",
         size:        contentLength || null,
-        filename
+        filename,
+        thumbnail:   thumbnail // Thumbnail URL passed to frontend
       });
 
     } finally { clearTimeout(timer); }
@@ -472,7 +453,6 @@ app.get("/api/download", async (req, res) => {
 
     const idParam = req.query.id ? String(req.query.id).trim() : null;
 
-    /* ── ID path (best) ── */
     if (idParam) {
       const cached = extractionCache.get(idParam);
       if (!cached)
@@ -484,7 +464,6 @@ app.get("/api/download", async (req, res) => {
       originalSocialUrl = cached.originalUrl;
       console.log("[dl] id=", idParam, "url=", targetUrl.slice(0, 80));
 
-    /* ── URL fallback ── */
     } else {
       let rawUrl = req.query.url;
       if (!rawUrl)
@@ -517,11 +496,9 @@ app.get("/api/download", async (req, res) => {
     req.on("close", () => { controller.abort(); clearTimeout(timer); });
 
     try {
-      /* ── Fetch from CDN ── */
       let response    = await fetchCDN(targetUrl, customHeaders, controller.signal);
       let contentType = getRawContentType(response);
 
-      /* ── CDN expired? Re-extract ── */
       if (!response.ok || !isValidMediaType(contentType)) {
         console.log("[dl] CDN bad:", response.status, contentType);
         if (originalSocialUrl && isSocialMediaUrl(originalSocialUrl)) {
@@ -542,7 +519,6 @@ app.get("/api/download", async (req, res) => {
             message: `Bad media response (${response.status}). Please try again.` });
       }
 
-      /* ── Headers ── */
       const filename        = filenameFromUrl(targetUrl, contentType, extractedTitle);
       const safeFilename    = filename.replace(/[\r\n"']/g, "");
       const encodedFilename = encodeURIComponent(safeFilename);
@@ -560,7 +536,6 @@ app.get("/api/download", async (req, res) => {
       res.setHeader("X-Content-Type-Options","nosniff");
       res.setHeader("Transfer-Encoding",     "chunked");
 
-      /* ── Stream ── */
       await streamToResponse(response, res, controller, startTime);
 
     } finally { clearTimeout(timer); }
@@ -591,7 +566,7 @@ app.use((err, _req, res, next) => {
    START
 ════════════════════════════════════════ */
 const server = app.listen(PORT, "0.0.0.0", () =>
-  console.log(`QuickSave v4.0 running on port ${PORT}`)
+  console.log(`QuickSave v4.1 running on port ${PORT}`)
 );
 
 function shutdown(sig) {
