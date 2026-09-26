@@ -106,26 +106,14 @@ function filenameFromUrl(url, contentType="", customTitle=null) {
   return (!n||n==="."||n.length<2) ? `QuickSave_Media${ext}` : n.slice(0,50);
 }
 
-function getContentType(r) {
+function getRawContentType(r) {
   return (r.headers.get("content-type")||"").split(";")[0].trim().toLowerCase();
 }
 
-/* ── CRITICAL: Content-Type valid hai ya nahi ── */
-function isValidMediaContentType(ct) {
+function isValidMediaType(ct) {
   if (!ct) return false;
-  // JSON, HTML, text = invalid = CDN ne error diya
-  if (ct.includes("application/json")) return false;
-  if (ct.includes("text/html"))        return false;
-  if (ct.includes("text/plain"))       return false;
-  if (ct.includes("text/xml"))         return false;
-  if (ct.includes("application/xml"))  return false;
-  // Valid media types
-  return (
-    ct.includes("video/") ||
-    ct.includes("audio/") ||
-    ct.includes("image/") ||
-    ct === "application/octet-stream"
-  );
+  if (ct.includes("json")||ct.includes("html")||ct.includes("text/")||ct.includes("xml")) return false;
+  return ct.includes("video/")||ct.includes("audio/")||ct.includes("image/")||ct==="application/octet-stream";
 }
 
 /* ── social media detect ── */
@@ -149,7 +137,6 @@ function cacheExtraction(originalUrl, extractedData) {
   extractionCache.set(originalUrl, payload);
   extractionCache.set(extractedData.url, payload);
   extractionCache.set(downloadId, payload);
-  // Instagram CDN URLs expire in ~6 hours, but cache only 10 min to be safe
   setTimeout(()=>{
     extractionCache.delete(originalUrl);
     extractionCache.delete(extractedData.url);
@@ -158,21 +145,13 @@ function cacheExtraction(originalUrl, extractedData) {
   return payload;
 }
 
-function invalidateCache(downloadId) {
-  const c = extractionCache.get(downloadId);
-  if (!c) return;
-  extractionCache.delete(c.originalUrl);
-  extractionCache.delete(c.url);
-  extractionCache.delete(downloadId);
-}
-
 /* ── yt-dlp extractor ── */
 async function extractDirectVideoUrl(url) {
   try {
     const output=await youtubedl(url,{
       dumpSingleJson:true,noCheckCertificates:true,noWarnings:true,format:"b"
     });
-    if (!output) throw new Error("No output from extractor.");
+    if (!output) throw new Error("No output.");
     let directUrl=output.url;
     let headers={...(output.http_headers||{})};
     delete headers["Host"]; delete headers["host"];
@@ -181,7 +160,7 @@ async function extractDirectVideoUrl(url) {
       headers={...(output.requested_formats[0].http_headers||{})};
       delete headers["Host"]; delete headers["host"];
     }
-    if (!directUrl) throw new Error("Could not extract media stream.");
+    if (!directUrl) throw new Error("Could not extract stream URL.");
     return {url:directUrl, title:output.title||"Video", headers};
   } catch (e) {
     console.error("Extractor error:", e.message);
@@ -206,14 +185,16 @@ async function fetchSafe(initialUrl, options={}, redirectCount=0) {
   return response;
 }
 
-async function fetchCDN(targetUrl, method, headers, signal) {
+async function fetchCDN(targetUrl, headers, signal) {
   const h={"User-Agent":UA,"Accept":"*/*",...headers};
   delete h["Host"]; delete h["host"];
-  return fetch(targetUrl,{method,headers:h,redirect:"follow",signal});
+  // CRITICAL: Range headers CDN ko mat bhejo - fresh GET only
+  delete h["Range"]; delete h["range"];
+  return fetch(targetUrl,{method:"GET",headers:h,redirect:"follow",signal});
 }
 
 /* ── health ── */
-app.get("/health",(_req,res)=>res.json({ok:true,service:"QuickSave",version:"2.9"}));
+app.get("/health",(_req,res)=>res.json({ok:true,service:"QuickSave",version:"3.0"}));
 
 /* ══════════════════════════════════════════
    INSPECT
@@ -230,13 +211,13 @@ app.post("/api/inspect", async (req,res) => {
 
     if (extractionCache.has(targetUrl)) {
       const c=extractionCache.get(targetUrl);
-      targetUrl=c.url; extractedTitle=c.title; customHeaders=c.headers||{};
-      downloadId=c.downloadId; useCDNFetch=true;
+      targetUrl=c.url; extractedTitle=c.title;
+      customHeaders=c.headers||{}; downloadId=c.downloadId; useCDNFetch=true;
     } else if (isSocialMediaUrl(targetUrl)) {
       const data=await extractDirectVideoUrl(targetUrl);
       const c=cacheExtraction(targetUrl,data);
-      targetUrl=c.url; extractedTitle=c.title; customHeaders=c.headers||{};
-      downloadId=c.downloadId; useCDNFetch=true;
+      targetUrl=c.url; extractedTitle=c.title;
+      customHeaders=c.headers||{}; downloadId=c.downloadId; useCDNFetch=true;
     } else {
       const c=cacheExtraction(targetUrl,{url:targetUrl,title:null,headers:{}});
       downloadId=c.downloadId;
@@ -246,41 +227,47 @@ app.post("/api/inspect", async (req,res) => {
     const timer=setTimeout(()=>controller.abort(),INSPECT_TIMEOUT);
 
     try {
+      // Simple HEAD check (no Range)
       let response=null;
       try {
-        response=useCDNFetch
-          ? await fetchCDN(targetUrl,"HEAD",customHeaders,controller.signal)
-          : await fetchSafe(targetUrl,{method:"HEAD",signal:controller.signal});
+        if (useCDNFetch) {
+          const h={"User-Agent":UA,"Accept":"*/*",...customHeaders};
+          delete h["Host"]; delete h["host"];
+          response=await fetch(targetUrl,{method:"HEAD",headers:h,redirect:"follow",signal:controller.signal});
+        } else {
+          response=await fetchSafe(targetUrl,{method:"HEAD",signal:controller.signal});
+        }
       } catch { response=null; }
 
-      let contentType=response?getContentType(response):"";
+      let contentType=response?getRawContentType(response):"";
       let contentLength=response?Number(response.headers.get("content-length")||0):0;
 
-      if (!response||!response.ok||!isValidMediaContentType(contentType)) {
-        response=useCDNFetch
-          ? await fetchCDN(targetUrl,"GET",{...customHeaders,Range:"bytes=0-0"},controller.signal)
-          : await fetchSafe(targetUrl,{method:"GET",headers:{Range:"bytes=0-0"},signal:controller.signal});
-        contentType=getContentType(response);
-        const cr=response.headers.get("content-range");
-        if (cr&&cr.includes("/")) {
-          const t=Number(cr.split("/")[1]);
-          if (!isNaN(t)&&t>0) contentLength=t;
+      // HEAD kaam nahi kiya ya invalid type aaya
+      if (!response||!response.ok||!isValidMediaType(contentType)) {
+        // Simple GET first bytes
+        if (useCDNFetch) {
+          response=await fetchCDN(targetUrl,customHeaders,controller.signal);
         } else {
-          contentLength=Number(response.headers.get("content-length")||0);
+          response=await fetchSafe(targetUrl,{method:"GET",signal:controller.signal});
         }
+        contentType=getRawContentType(response);
+        contentLength=Number(response.headers.get("content-length")||0);
         try { await response.body?.cancel(); } catch {}
       }
 
-      if (!response.ok && response.status!==206)
-        return res.status(400).json({ok:false,type:"error",message:`Media server returned HTTP ${response.status}.`});
+      if (!response.ok)
+        return res.status(400).json({ok:false,type:"error",
+          message:`Media server returned HTTP ${response.status}.`});
 
-      // CRITICAL: JSON/HTML response = CDN error, reject it
-      if (!isValidMediaContentType(contentType))
+      if (!isValidMediaType(contentType))
         return res.status(400).json({ok:false,type:"unsupported",
-          message:"This URL does not return a valid media file. Try again or use a different link."});
+          message:"This URL does not return a valid media file."});
 
       if (contentLength&&contentLength>MAX_BYTES)
-        return res.status(400).json({ok:false,type:"too-large",message:"File is larger than 250 MB."});
+        return res.status(400).json({ok:false,type:"too-large",
+          message:"File is larger than 250 MB."});
+
+      const filename=filenameFromUrl(targetUrl, contentType, extractedTitle);
 
       return res.json({
         ok:true, type:"media",
@@ -290,18 +277,22 @@ app.post("/api/inspect", async (req,res) => {
         originalUrl: url.toString(),
         contentType: contentType||"video/mp4",
         size: contentLength||null,
-        filename: filenameFromUrl(targetUrl, contentType, extractedTitle)
+        filename
       });
     } finally { clearTimeout(timer); }
 
   } catch (e) {
     console.error("Inspect error:", e);
-    return res.status(400).json({ok:false,type:"error",message:e.message||"Unable to process this URL."});
+    return res.status(400).json({ok:false,type:"error",
+      message:e.message||"Unable to process this URL."});
   }
 });
 
 /* ══════════════════════════════════════════
-   DOWNLOAD  
+   DOWNLOAD — KEY FIX IS HERE
+   Server CDN se poora file download karta hai
+   aur browser ko fresh stream karta hai.
+   Range headers CDN tak NAHI jaate.
 ══════════════════════════════════════════ */
 app.get("/api/download", async (req,res) => {
   const ip=cleanIp(req.headers["x-forwarded-for"]||req.socket.remoteAddress);
@@ -309,48 +300,49 @@ app.get("/api/download", async (req,res) => {
   if (!acquireDownload(ip)) return res.status(429).json({ok:false,message:"Too many active downloads."});
 
   try {
-    let targetUrl=null, extractedTitle=null, customHeaders={}, useCDNFetch=false;
-    let originalSocialUrl=null, downloadId=null;
+    let targetUrl=null, extractedTitle=null, customHeaders={};
+    let originalSocialUrl=null;
 
     const idParam=req.query.id?String(req.query.id).trim():null;
 
     if (idParam) {
-      const cached=extractionCache.get(idParam);
+      let cached=extractionCache.get(idParam);
+
+      // Agar cache miss hai (expired) aur originalUrl pata nahi
       if (!cached) {
         return res.status(410).json({ok:false,
           message:"Link expired. Please tap 'Get media' again."});
       }
-      targetUrl=cached.url; extractedTitle=cached.title;
-      customHeaders=cached.headers||{}; useCDNFetch=true;
-      originalSocialUrl=cached.originalUrl; downloadId=idParam;
-      console.log("[download] id=",idParam,"url=",targetUrl.slice(0,80));
+
+      // Check: kya cached CDN URL fresh hai?
+      originalSocialUrl=cached.originalUrl;
+      targetUrl=cached.url;
+      extractedTitle=cached.title;
+      customHeaders=cached.headers||{};
+
+      console.log("[download] id=",idParam,"→",targetUrl.slice(0,80));
 
     } else {
-      // URL fallback
+      // URL fallback path
       let rawUrl=req.query.url;
-      if (req.originalUrl.includes("url=")) {
-        const idx=req.originalUrl.indexOf("url=");
-        let full=req.originalUrl.substring(idx+4);
-        const hi=full.indexOf("#"); if (hi!==-1) full=full.substring(0,hi);
-        try { rawUrl=decodeURIComponent(full); } catch { rawUrl=full; }
-      }
-      if (!rawUrl) return res.status(400).json({ok:false,message:"URL or id is required."});
-      for(let i=0;i<2;i++){try{const d=decodeURIComponent(rawUrl);if(d===rawUrl)break;rawUrl=d;}catch{break;}}
+      if (!rawUrl) return res.status(400).json({ok:false,message:"id or url required."});
 
-      console.log("[download] url=",String(rawUrl).slice(0,120));
+      for(let i=0;i<2;i++){
+        try{const d=decodeURIComponent(rawUrl);if(d===rawUrl)break;rawUrl=d;}catch{break;}
+      }
 
       if (extractionCache.has(rawUrl)) {
         const c=extractionCache.get(rawUrl);
-        targetUrl=c.url; extractedTitle=c.title; customHeaders=c.headers||{};
-        useCDNFetch=true; originalSocialUrl=c.originalUrl; downloadId=c.downloadId;
+        targetUrl=c.url; extractedTitle=c.title;
+        customHeaders=c.headers||{}; originalSocialUrl=c.originalUrl;
       } else {
         const validated=await validateUrl(rawUrl);
         targetUrl=validated.toString();
         if (isSocialMediaUrl(targetUrl)) {
+          originalSocialUrl=targetUrl;
           const data=await extractDirectVideoUrl(targetUrl);
           const c=cacheExtraction(targetUrl,data);
           targetUrl=c.url; extractedTitle=c.title; customHeaders=c.headers||{};
-          useCDNFetch=true; originalSocialUrl=targetUrl; downloadId=c.downloadId;
         }
       }
     }
@@ -360,70 +352,51 @@ app.get("/api/download", async (req,res) => {
     req.on("close",()=>{controller.abort();clearTimeout(timer);});
 
     try {
-      const fetchHeaders={...customHeaders};
-      if (req.headers.range) fetchHeaders["Range"]=req.headers.range;
+      // ── CRITICAL FIX ──
+      // CDN ko sirf fresh GET bhejo - NO Range headers
+      // Yeh .json issue aur paused download fix karta hai
+      let response = await fetchCDN(targetUrl, customHeaders, controller.signal);
 
-      let response=useCDNFetch
-        ? await fetchCDN(targetUrl,"GET",fetchHeaders,controller.signal)
-        : await fetchSafe(targetUrl,{method:"GET",headers:fetchHeaders,signal:controller.signal});
+      let contentType=getRawContentType(response);
 
-      // ── CRITICAL FIX: Agar CDN ne expired/error response diya ──
-      // Detect: status 400/403/410 ya Content-Type JSON/HTML
-      const responseCT = getContentType(response);
-      const cdnExpired = !response.ok && response.status!==206;
-      const wrongType  = !isValidMediaContentType(responseCT);
+      // Agar CDN ne error/JSON diya = URL expire hui, re-extract karo
+      if (!response.ok || !isValidMediaType(contentType)) {
+        console.log("[download] CDN bad response:",response.status, contentType);
 
-      if ((cdnExpired || wrongType) && originalSocialUrl && isSocialMediaUrl(originalSocialUrl)) {
-        console.log("[download] CDN expired or wrong type:",response.status, responseCT,"— re-extracting...");
-
-        // Cache invalidate karo
-        if (downloadId) invalidateCache(downloadId);
-
-        // Fresh extract
-        let freshData;
-        try {
-          freshData=await extractDirectVideoUrl(originalSocialUrl);
-        } catch(e) {
-          return res.status(410).json({ok:false,
-            message:"Media link expired and could not be refreshed. Please tap 'Get media' again."});
+        if (originalSocialUrl && isSocialMediaUrl(originalSocialUrl)) {
+          console.log("[download] Re-extracting from:", originalSocialUrl);
+          try {
+            const fresh=await extractDirectVideoUrl(originalSocialUrl);
+            const c=cacheExtraction(originalSocialUrl,fresh);
+            targetUrl=c.url; customHeaders=c.headers||{}; extractedTitle=fresh.title;
+            response=await fetchCDN(targetUrl,customHeaders,controller.signal);
+            contentType=getRawContentType(response);
+          } catch(e) {
+            return res.status(502).json({ok:false,
+              message:"Media link expired. Please tap 'Get media' again."});
+          }
         }
 
-        // Re-cache
-        const newCached=cacheExtraction(originalSocialUrl, freshData);
-        targetUrl=newCached.url; customHeaders=newCached.headers||{};
-        extractedTitle=freshData.title;
-
-        // Re-fetch with fresh URL
-        const freshHeaders={...customHeaders};
-        if (req.headers.range) freshHeaders["Range"]=req.headers.range;
-        response=await fetchCDN(targetUrl,"GET",freshHeaders,controller.signal);
-
-        const freshCT=getContentType(response);
-        if (!response.ok&&response.status!==206)
-          return res.status(502).json({ok:false,message:`Refreshed CDN returned HTTP ${response.status}.`});
-        if (!isValidMediaContentType(freshCT))
-          return res.status(502).json({ok:false,message:"Refreshed URL also returned invalid content. Please try again."});
-
-      } else if (cdnExpired) {
-        return res.status(400).json({ok:false,message:`Media server returned HTTP ${response.status}.`});
-      } else if (wrongType) {
-        // Non-social wrong type — direct reject
-        return res.status(400).json({ok:false,
-          message:`Server returned '${responseCT}' instead of media. Please try again.`});
+        if (!response.ok || !isValidMediaType(contentType)) {
+          return res.status(502).json({ok:false,
+            message:`Invalid response from media server (${response.status} ${contentType}). Please try again.`});
+        }
       }
 
-      const contentType=getContentType(response)||"video/mp4";
+      // Content-Length check
       const contentLength=Number(response.headers.get("content-length")||0);
-
       if (contentLength&&contentLength>MAX_BYTES)
         return res.status(413).json({ok:false,message:"File exceeds 250 MB limit."});
 
-      const filename=filenameFromUrl(targetUrl, contentType, extractedTitle);
+      const filename=filenameFromUrl(targetUrl,contentType,extractedTitle);
       const safeFilename=filename.replace(/[\r\n"']/g,"");
       const encodedFilename=encodeURIComponent(safeFilename);
+
       const wantInline=req.query.inline==="1";
 
-      res.status(response.status);
+      // ── Send headers ──
+      // Status 200 ALWAYS (not 206) - hum range support nahi karte CDN ke liye
+      res.status(200);
       res.setHeader("Content-Type", contentType);
       res.setHeader("Content-Disposition",
         wantInline
@@ -431,11 +404,15 @@ app.get("/api/download", async (req,res) => {
           : `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
       );
       res.setHeader("Cache-Control","no-store");
-      res.setHeader("Accept-Ranges","bytes");
-      if (response.headers.has("content-length")) res.setHeader("Content-Length",response.headers.get("content-length"));
-      if (response.headers.has("content-range"))  res.setHeader("Content-Range",response.headers.get("content-range"));
+      // Accept-Ranges: none - browser range request nahi karega
+      // Yahi .json ka fix hai!
+      res.setHeader("Accept-Ranges","none");
+
+      if (contentLength) res.setHeader("Content-Length", String(contentLength));
 
       if (!response.body) throw new Error("Media stream unavailable.");
+
+      // Stream karo
       let total=0;
       for await (const chunk of response.body) {
         total+=chunk.length;
@@ -445,9 +422,12 @@ app.get("/api/download", async (req,res) => {
           else res.destroy();
           return;
         }
-        if (!res.write(chunk)) await new Promise(r=>res.once("drain",r));
+        if (!res.write(chunk)) {
+          await new Promise(r=>res.once("drain",r));
+        }
       }
       res.end();
+      console.log("[download] complete, bytes=",total);
 
     } finally { clearTimeout(timer); }
 
@@ -471,7 +451,9 @@ app.use((err,_req,res,next)=>{
   res.status(500).json({ok:false,message:"Internal server error."});
 });
 
-const server=app.listen(PORT,"0.0.0.0",()=>console.log(`QuickSave v2.9 running on port ${PORT}`));
+const server=app.listen(PORT,"0.0.0.0",()=>
+  console.log(`QuickSave v3.0 running on port ${PORT}`)
+);
 
 function shutdown(sig){
   console.log(sig+" received");
