@@ -71,7 +71,7 @@ nav {
   gap: 12px;
 }
 
-/* ── Auto Toggle (Original Code) ── */
+/* ── Auto Toggle ── */
 .autolabel {
   position: relative;
   display: inline-block;
@@ -114,23 +114,106 @@ input:checked + .slider:before {
   white-space: nowrap;
 }
 
-/* ── Buttons ── */
+/* ── Install Button (Android) ── */
 .install {
   background: #1c2033;
   color: #fff;
   border: 1px solid #2d334d;
-  padding: 8px 16px;
+  padding: 8px 14px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   transition: 0.2s;
+  white-space: nowrap;
 }
 .install:hover {
-  background: #2d334d;
+  background: #7c6cfc;
+  border-color: #7c6cfc;
 }
 .install.hidden {
   display: none;
+}
+
+/* ── iOS Install Banner ── */
+.ios-install {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: linear-gradient(135deg, #1c2033, #252a42);
+  border-top: 1px solid rgba(124, 108, 252, 0.4);
+  padding: 16px 20px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 30px rgba(0,0,0,0.5);
+  animation: slideUp 0.3s ease;
+}
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.ios-install.hidden {
+  display: none;
+}
+.ios-install-content {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.ios-install-icon {
+  font-size: 28px;
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, #7c6cfc, #e83e8c);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-weight: bold;
+  color: white;
+}
+.ios-install-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ios-install-text strong {
+  font-size: 15px;
+  color: #fff;
+  font-weight: 700;
+}
+.ios-install-text span {
+  font-size: 13px;
+  color: #aaa;
+  line-height: 1.4;
+}
+.ios-install-text .share-icon {
+  font-size: 15px;
+  color: #7c6cfc;
+}
+.ios-dismiss {
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: #aaa;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: 0.2s;
+}
+.ios-dismiss:hover {
+  background: rgba(255,255,255,0.2);
+  color: #fff;
 }
 
 /* ── Hero Section ── */
@@ -173,6 +256,10 @@ p {
   max-width: 600px;
   margin: 0 auto;
 }
+.box.drag {
+  border-color: #7c6cfc;
+  background: rgba(124, 108, 252, 0.1);
+}
 .droptext {
   font-size: 15px;
   color: #eee;
@@ -187,6 +274,10 @@ p {
   padding: 8px 10px;
   border: 1px solid #2a2e45;
   margin-bottom: 20px;
+  transition: border-color 0.2s;
+}
+.input:focus-within {
+  border-color: #7c6cfc;
 }
 .input span {
   color: #7c6cfc;
@@ -201,6 +292,7 @@ p {
   font-size: 15px;
   outline: none;
   width: 100%;
+  min-width: 0;
 }
 .input input::placeholder {
   color: #555;
@@ -214,13 +306,15 @@ p {
   cursor: pointer;
   font-weight: 600;
   transition: 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .input button:hover {
   background: #303652;
 }
 .go {
   width: 100%;
-  background: #7c6cfc;
+  background: linear-gradient(135deg, #7c6cfc, #6b5ce6);
   color: #fff;
   border: none;
   padding: 16px;
@@ -235,7 +329,13 @@ p {
   gap: 8px;
 }
 .go:hover {
-  background: #6b5ce6;
+  background: linear-gradient(135deg, #6b5ce6, #5a4dd6);
+  transform: translateY(-1px);
+}
+.go:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
 }
 .hint {
   font-size: 13px;
@@ -243,7 +343,7 @@ p {
   margin-top: 20px;
 }
 
-/* ── Result & Status Elements ── */
+/* ── Status ── */
 .hide {
   display: none !important;
 }
@@ -256,7 +356,20 @@ p {
   font-weight: 500;
   border: 1px solid rgba(124, 108, 252, 0.2);
   max-width: 600px;
+  text-align: center;
 }
+.status.ok {
+  background: rgba(0, 200, 100, 0.1);
+  color: #00e676;
+  border-color: rgba(0, 200, 100, 0.2);
+}
+.status.err {
+  background: rgba(255, 50, 80, 0.1);
+  color: #ff5252;
+  border-color: rgba(255, 50, 80, 0.2);
+}
+
+/* ── Result Card ── */
 .result {
   text-align: left;
   background: rgba(25, 28, 43, 0.6);
@@ -273,19 +386,33 @@ p {
   margin-bottom: 20px;
 }
 .thumb {
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   background: #1c2033;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  font-size: 20px;
+  font-size: 24px;
   color: #7c6cfc;
+  flex-shrink: 0;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.thumb:hover {
+  transform: scale(1.05);
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
 }
 .fileinfo {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 .fileinfo small {
   font-size: 11px;
@@ -295,35 +422,156 @@ p {
   margin-bottom: 4px;
 }
 .fileinfo b {
-  font-size: 16px;
+  font-size: 15px;
   color: #fff;
   margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fileinfo em {
   font-size: 13px;
   color: #888;
   font-style: normal;
 }
+
+/* ── Progress ── */
+.progress {
+  margin-bottom: 16px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.progress > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #aaa;
+  margin-bottom: 8px;
+}
+.progress i {
+  display: block;
+  background: #1c2033;
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+  font-style: normal;
+}
+.progress i b {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #7c6cfc, #e83e8c);
+  border-radius: 4px;
+  width: 0%;
+  transition: width 0.5s ease;
+}
+
+/* ── Download Button ── */
 .download {
   display: block;
   text-align: center;
   background: #fff;
   color: #000;
   text-decoration: none;
-  padding: 14px;
+  padding: 16px;
   border-radius: 12px;
-  font-weight: 600;
-  font-size: 15px;
+  font-weight: 700;
+  font-size: 16px;
   transition: 0.2s;
+  letter-spacing: 0.3px;
 }
 .download:hover {
   background: #eee;
+  transform: translateY(-1px);
+}
+.download:active {
+  transform: translateY(0);
+}
+
+/* ── History ── */
+.history {
+  background: rgba(25, 28, 43, 0.6);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 20px;
+  margin-top: 24px;
+  max-width: 600px;
+  margin-inline: auto;
+}
+.sectionhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.sectionhead h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #eee;
+}
+.sectionhead button {
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: 0.2s;
+}
+.sectionhead button:hover {
+  background: #1c2033;
+  color: #fff;
+}
+.historyrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  gap: 12px;
+}
+.historyrow:last-child {
+  border-bottom: none;
+}
+.historyrow > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.historyrow b {
+  font-size: 14px;
+  color: #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.historyrow small {
+  font-size: 12px;
+  color: #666;
+  margin-top: 2px;
+}
+.historyrow a {
+  background: #1c2033;
+  color: #7c6cfc;
+  text-decoration: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: 0.2s;
+  flex-shrink: 0;
+}
+.historyrow a:hover {
+  background: #7c6cfc;
+  color: #fff;
 }
 
 /* ── Features ── */
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
   margin-top: 60px;
   text-align: left;
@@ -333,6 +581,11 @@ p {
   padding: 24px;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: 0.2s;
+}
+.features article:hover {
+  border-color: rgba(124, 108, 252, 0.2);
+  background: rgba(124, 108, 252, 0.04);
 }
 .features b {
   font-size: 24px;
@@ -351,7 +604,7 @@ p {
   line-height: 1.5;
 }
 
-/* ── Footer ── */
+/* ── Notice & Footer ── */
 .notice {
   font-size: 13px;
   color: #888;
@@ -360,6 +613,7 @@ p {
   background: rgba(255, 255, 255, 0.02);
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+  line-height: 1.5;
 }
 .notice b {
   color: #ccc;
@@ -370,6 +624,30 @@ footer {
   font-size: 13px;
   color: #555;
   margin-top: 40px;
+  margin-bottom: 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   padding-top: 24px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 480px) {
+  main {
+    padding: 16px;
+  }
+  nav {
+    margin-bottom: 30px;
+  }
+  .box {
+    padding: 20px 16px;
+  }
+  h1 {
+    font-size: 32px;
+  }
+  .features {
+    grid-template-columns: 1fr;
+    margin-top: 40px;
+  }
+  .ios-install-text span {
+    font-size: 12px;
+  }
 }
