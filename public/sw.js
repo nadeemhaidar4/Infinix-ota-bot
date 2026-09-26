@@ -1,65 +1,43 @@
-/* QuickSave Service Worker v8.3 - Fixed Background Download */
-const CACHE_NAME = "quicksave-v8.3.0";
+/* QuickSave Service Worker v8.4 */
+const CACHE_NAME = "quicksave-v8.4.0";
 const BG_DOWNLOADS = new Map();
 
 const STATIC_FILES = [
-  "/",
-  "/index.html",
-  "/styles.css",
-  "/app.js",
-  "/manifest.webmanifest",
-  "/icon.svg",
-  "/icon-192.png",
-  "/icon-512.png"
+  "/", "/index.html", "/styles.css", "/app.js",
+  "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"
 ];
 
-/* ── Install ── */
 self.addEventListener("install", event => {
-  console.log("[SW] Installing:", CACHE_NAME);
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(STATIC_FILES))
+      .then(c => c.addAll(STATIC_FILES))
       .then(() => self.skipWaiting())
   );
 });
 
-/* ── Activate ── */
 self.addEventListener("activate", event => {
-  console.log("[SW] Activating:", CACHE_NAME);
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys
-          .filter(k => k !== CACHE_NAME && k !== "qs-bg-files")
-          .map(k => caches.delete(k))
+        keys.filter(k => k !== CACHE_NAME && k !== "qs-bg-files")
+            .map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );
 });
 
-/* ── Fetch: Static files ── */
+/* ── Fetch handler ── */
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
 
-  /* API calls - no cache */
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(fetch(event.request));
     return;
   }
-
-  /* Background stored video file serve karo */
-  if (url.pathname.startsWith("/qs-file/")) {
-    event.respondWith(serveBgFile(url.pathname));
-    return;
-  }
-
-  /* External - no cache */
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
   }
-
-  /* Static files - network first */
   event.respondWith(networkFirst(event.request));
 });
 
@@ -80,14 +58,6 @@ async function networkFirst(request) {
   }
 }
 
-/* ── Serve background downloaded file ── */
-async function serveBgFile(pathname) {
-  const cache = await caches.open("qs-bg-files");
-  const stored = await cache.match(pathname);
-  if (stored) return stored;
-  return new Response("File not found or expired", { status: 404 });
-}
-
 /* ════════════════════════════════════════
    MESSAGE HANDLER
 ════════════════════════════════════════ */
@@ -98,190 +68,175 @@ self.addEventListener("message", event => {
     self.skipWaiting();
     return;
   }
-
   if (type === "BG_DOWNLOAD") {
-    /* waitUntil zaruri hai - SW band na ho beech mein */
-    event.waitUntil(
-      handleBackgroundDownload(data)
-    );
+    event.waitUntil(handleBgDownload(data));
     return;
   }
-
   if (type === "CANCEL") {
-    const dl = BG_DOWNLOADS.get(data?.id);
-    if (dl) { dl.abort(); BG_DOWNLOADS.delete(data.id); }
+    BG_DOWNLOADS.get(data?.id)?.abort();
+    BG_DOWNLOADS.delete(data?.id);
     return;
   }
 });
 
 /* ════════════════════════════════════════
-   BACKGROUND DOWNLOAD HANDLER
+   BACKGROUND DOWNLOAD
    
-   Flow:
-   1. /api/inspect → mediaId, filename
-   2. /api/download → puri video file bytes
-   3. Cache mein store karo (/qs-file/ID)
-   4. Client ko message bhejo → auto blob download
-   5. Agar client visible nahi → notification
+   SW mein file download karo memory mein
+   Fir client ko base64/arrayBuffer bhejo
+   Client blob banayega - NO a.click()
 ════════════════════════════════════════ */
-async function handleBackgroundDownload(data) {
+async function handleBgDownload(data) {
   const { url: pageUrl, id: dlId } = data;
+  console.log("[SW-BG] Start:", dlId);
 
-  console.log(`[SW-BG] Starting: ${dlId}`);
+  const ctrl = new AbortController();
+  BG_DOWNLOADS.set(dlId, ctrl);
 
-  const controller = new AbortController();
-  BG_DOWNLOADS.set(dlId, controller);
-
-  /* Clients ko status bhejo */
   await broadcast({ type: "BG_STATUS", id: dlId, status: "processing" });
 
+  /* Processing notification - silent */
   try {
-    /* ── STEP 1: Inspect ── */
+    await self.registration.showNotification("QuickSave", {
+      body:   "Downloading your video...",
+      icon:   "/icon-192.png",
+      badge:  "/icon-192.png",
+      tag:    `qs-prog-${dlId}`,
+      silent: true,
+      data:   { dlId, step: "progress" }
+    });
+  } catch(e) {}
+
+  try {
+    /* Step 1: Inspect */
     const inspRes = await fetch("/api/inspect", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ url: pageUrl }),
-      signal:  controller.signal
+      signal:  ctrl.signal
     });
 
     if (!inspRes.ok) {
       const e = await inspRes.json().catch(() => ({}));
-      throw new Error(e.message || `Inspect failed (${inspRes.status})`);
+      throw new Error(e.message || "Could not extract video");
     }
 
     const insp = await inspRes.json();
     if (!insp.ok || !insp.id) throw new Error(insp.message || "Extraction failed");
 
     const mediaId  = insp.id;
-    const filename = sanitizeFilename(insp.filename || "QuickSave_video.mp4");
+    const filename = cleanFilename(insp.filename || "QuickSave_video.mp4");
 
-    console.log(`[SW-BG] Got mediaId: ${mediaId} | file: ${filename}`);
+    console.log("[SW-BG] Got:", filename, mediaId);
 
     await broadcast({
       type: "BG_STATUS", id: dlId,
       status: "downloading", filename
     });
 
-    /* ── STEP 2: Download actual video bytes ── */
-    const dlRes = await fetch(`/api/download?id=${encodeURIComponent(mediaId)}`, {
-      signal: controller.signal
-    });
+    /* Step 2: Download video bytes */
+    const dlRes = await fetch(
+      `/api/download?id=${encodeURIComponent(mediaId)}`,
+      { signal: ctrl.signal }
+    );
 
     if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status})`);
 
-    /* Content-Type check - video hona chahiye */
-    const ct = (dlRes.headers.get("content-type") || "video/mp4")
-      .split(";")[0].trim();
+    const contentType = parseContentType(dlRes.headers.get("content-type"));
+    const fileBytes   = await dlRes.arrayBuffer();
+    const sizeMB      = (fileBytes.byteLength / 1024 / 1024).toFixed(1);
 
-    if (!ct.startsWith("video/") && !ct.startsWith("audio/") &&
-        ct !== "application/octet-stream") {
-      throw new Error(`Invalid file type: ${ct}`);
+    console.log("[SW-BG] Downloaded:", sizeMB, "MB | type:", contentType);
+
+    if (fileBytes.byteLength < 5000) {
+      throw new Error("File too small, likely an error response");
     }
 
-    /* Puri file bytes padho */
-    const fileBytes  = await dlRes.arrayBuffer();
-    const fileSizeMB = (fileBytes.byteLength / 1024 / 1024).toFixed(1);
+    /* Step 3: Close progress notification */
+    try {
+      const notifs = await self.registration.getNotifications({ tag: `qs-prog-${dlId}` });
+      notifs.forEach(n => n.close());
+    } catch(e) {}
 
-    console.log(`[SW-BG] Downloaded: ${fileSizeMB}MB | type: ${ct}`);
-
-    /* ── STEP 3: Cache mein store karo ── */
-    const cacheKey  = `/qs-file/${dlId}`;
-    const bgCache   = await caches.open("qs-bg-files");
-
-    /* Sahi Content-Type ke saath store karo - HTML nahi! */
-    const storeResp = new Response(fileBytes, {
-      status:  200,
-      headers: {
-        "Content-Type":        ct.startsWith("video/") ? ct : "video/mp4",
-        "Content-Length":      String(fileBytes.byteLength),
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "X-QS-Filename":       filename,
-        "X-QS-Size":           String(fileBytes.byteLength)
-      }
+    /* Step 4: Client ko file data bhejo seedha */
+    const clients = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true
     });
 
-    await bgCache.put(cacheKey, storeResp);
+    let sentToClient = false;
 
-    /* 30 min baad cache clean karo */
-    setTimeout(async () => {
-      try {
-        const c = await caches.open("qs-bg-files");
-        await c.delete(cacheKey);
-      } catch {}
-    }, 30 * 60 * 1000);
+    for (const client of clients) {
+      if (new URL(client.url).origin === self.location.origin) {
+        /* ArrayBuffer transfer karo - zero copy */
+        client.postMessage({
+          type:        "SAVE_FILE",
+          id:          dlId,
+          filename:    filename,
+          contentType: contentType,
+          sizeMB:      sizeMB,
+          buffer:      fileBytes
+        }, [fileBytes]); /* Transferable - memory efficient */
 
-    /* ── STEP 4: Client ko bhejo ── */
-    const clients = await self.clients.matchAll({ type: "window" });
-
-    /* Koi visible client hai? */
-    const visibleClient = clients.find(c => c.visibilityState === "visible");
-
-    if (visibleClient) {
-      /* App open hai - seedha download trigger karo */
-      visibleClient.postMessage({
-        type:     "AUTO_DOWNLOAD",
-        cacheKey: cacheKey,
-        filename: filename,
-        size:     fileBytes.byteLength,
-        id:       dlId
-      });
-      console.log(`[SW-BG] Sent to visible client`);
-    } else if (clients.length > 0) {
-      /* App open hai but background mein */
-      clients[0].postMessage({
-        type:     "AUTO_DOWNLOAD",
-        cacheKey: cacheKey,
-        filename: filename,
-        size:     fileBytes.byteLength,
-        id:       dlId
-      });
+        sentToClient = true;
+        console.log("[SW-BG] File sent to client");
+        break;
+      }
     }
 
-    /* ── STEP 5: Notification ── */
-    await self.registration.showNotification("✅ QuickSave — Download Ready", {
-      body:    `${filename} (${fileSizeMB}MB) saved!`,
+    /* Step 5: Success notification */
+    await self.registration.showNotification("✅ QuickSave — Video Ready!", {
+      body:    sentToClient
+        ? `${filename} (${sizeMB}MB) — Saving to your device...`
+        : `${filename} (${sizeMB}MB) — Tap to save`,
       icon:    "/icon-192.png",
       badge:   "/icon-192.png",
       tag:     `qs-done-${dlId}`,
       silent:  false,
       vibrate: [100, 50, 200],
       data: {
-        cacheKey: cacheKey,
-        filename: filename,
-        dlId:     dlId,
-        done:     true
+        dlId,
+        mediaId,
+        filename,
+        sizeMB,
+        step: "done",
+        /* File data ab available hai client mein */
+        clientHasFile: sentToClient
       }
     });
 
     BG_DOWNLOADS.delete(dlId);
-    console.log(`[SW-BG] Complete: ${dlId}`);
+    console.log("[SW-BG] Complete:", dlId);
 
-  } catch (err) {
+  } catch(err) {
     if (err.name === "AbortError") {
-      console.log(`[SW-BG] Cancelled: ${dlId}`);
       BG_DOWNLOADS.delete(dlId);
       return;
     }
 
-    console.error(`[SW-BG] Failed:`, err.message);
+    console.error("[SW-BG] Error:", err.message);
 
     await broadcast({
-      type:   "BG_STATUS",
-      id:     dlId,
-      status: "error",
-      msg:    err.message
+      type: "BG_STATUS", id: dlId,
+      status: "error", msg: err.message
     });
 
+    /* Close progress notification */
     try {
-      await self.registration.showNotification("❌ QuickSave — Failed", {
-        body:   `${err.message.slice(0, 100)}`,
+      const notifs = await self.registration.getNotifications({ tag: `qs-prog-${dlId}` });
+      notifs.forEach(n => n.close());
+    } catch(e) {}
+
+    try {
+      await self.registration.showNotification("❌ QuickSave — Download Failed", {
+        body:   err.message.slice(0, 100),
         icon:   "/icon-192.png",
         badge:  "/icon-192.png",
         tag:    `qs-err-${dlId}`,
         silent: false,
-        data:   { error: true, dlId }
+        data:   { dlId, step: "error" }
       });
-    } catch {}
+    } catch(e) {}
 
     BG_DOWNLOADS.delete(dlId);
   }
@@ -292,51 +247,60 @@ async function handleBackgroundDownload(data) {
 ════════════════════════════════════════ */
 self.addEventListener("notificationclick", event => {
   event.notification.close();
-  const { cacheKey, filename, done, dlId } = event.notification.data || {};
+  const d = event.notification.data || {};
 
-  if (!done || !cacheKey) return;
+  if (d.step === "progress") return; /* Progress notification - ignore */
 
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true })
-      .then(async clients => {
-
-        /* Agar koi client open hai */
-        for (const client of clients) {
-          if (new URL(client.url).origin === self.location.origin) {
-            await client.focus();
-            /* Auto download trigger karo */
-            client.postMessage({
-              type:     "AUTO_DOWNLOAD",
-              cacheKey: cacheKey,
-              filename: filename,
-              id:       dlId
-            });
-            return;
+  if (d.step === "done") {
+    event.waitUntil(
+      self.clients.matchAll({ type: "window", includeUncontrolled: true })
+        .then(async clients => {
+          for (const client of clients) {
+            if (new URL(client.url).origin === self.location.origin) {
+              await client.focus();
+              /* Client ko trigger karo */
+              client.postMessage({
+                type:     "NOTIF_CLICKED",
+                mediaId:  d.mediaId,
+                filename: d.filename,
+                dlId:     d.dlId
+              });
+              return;
+            }
           }
-        }
+          /* App band thi - open karo */
+          await self.clients.openWindow(
+            `/?qs_media=${encodeURIComponent(d.mediaId)}&qs_fn=${encodeURIComponent(d.filename)}`
+          );
+        })
+    );
+    return;
+  }
 
-        /* App band hai - open karo */
-        const newClient = await self.clients.openWindow(
-          `/?qs_dl=${encodeURIComponent(dlId)}&qs_ck=${encodeURIComponent(cacheKey)}&qs_fn=${encodeURIComponent(filename)}`
-        );
-      })
+  /* Default: app open */
+  event.waitUntil(
+    self.clients.openWindow("/")
   );
 });
 
-/* ── Broadcast to all clients ── */
+/* ── Helpers ── */
 async function broadcast(data) {
   const clients = await self.clients.matchAll({ type: "window" });
   clients.forEach(c => { try { c.postMessage(data); } catch {} });
 }
 
-/* ── Filename sanitize ── */
-function sanitizeFilename(name) {
-  /* Extension preserve karo */
-  const ext  = name.match(/\.[a-z0-9]+$/i)?.[0] || ".mp4";
-  const base = name.replace(/\.[a-z0-9]+$/i, "")
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .slice(0, 50);
+function cleanFilename(name) {
+  const ext  = name.match(/\.[a-z0-9]{2,4}$/i)?.[0] || ".mp4";
+  const base = name.replace(/\.[a-z0-9]{2,4}$/i, "")
+    .replace(/[^\w\s\-_.]/g, "")
+    .trim().replace(/\s+/g, "_").slice(0, 50);
   return (base || "QuickSave_video") + ext;
+}
+
+function parseContentType(ct) {
+  if (!ct) return "video/mp4";
+  const type = ct.split(";")[0].trim().toLowerCase();
+  if (type.startsWith("video/")) return type;
+  if (type.startsWith("audio/")) return type;
+  return "video/mp4";
 }
