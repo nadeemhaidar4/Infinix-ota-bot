@@ -1,36 +1,48 @@
-/* QuickSave app.js v6.1 — With Monetag Ads */
-console.log("QuickSave v6.1 loaded");
+/* QuickSave app.js v6.2 */
+console.log("QuickSave v6.2 loaded");
 
 const $ = id => document.getElementById(id);
 
-const url          = $("url"),
-      paste        = $("paste"),
-      go           = $("go"),
-      drop         = $("drop"),
-      status       = $("status"),
-      result       = $("result"),
-      name         = $("name"),
-      meta         = $("meta"),
-      download     = $("download"),
-      thumb        = $("thumb"),
-      progress     = $("progress"),
-      bar          = $("bar"),
-      progressText = $("progressText"),
-      progressPct  = $("progressPct"),
-      historyPanel = $("historyPanel"),
-      history      = $("history"),
-      install      = $("install"),
-      iosInstall   = $("iosInstall"),
-      iosDismiss   = $("iosDismiss"),
-      autoToggle   = $("autoToggle"),
-      autoLabel    = $("autoLabel"),
-      retryBtn     = $("retryBtn"),
-      adAfterDl    = $("adAfterDl");
+const url             = $("url"),
+      paste           = $("paste"),
+      go              = $("go"),
+      drop            = $("drop"),
+      status          = $("status"),
+      result          = $("result"),
+      name            = $("name"),
+      meta            = $("meta"),
+      download        = $("download"),
+      thumb           = $("thumb"),
+      progress        = $("progress"),
+      bar             = $("bar"),
+      progressText    = $("progressText"),
+      progressPct     = $("progressPct"),
+      historyPanel    = $("historyPanel"),
+      history         = $("history"),
+      install         = $("install"),
+      iosInstall      = $("iosInstall"),
+      iosDismiss      = $("iosDismiss"),
+      autoToggle      = $("autoToggle"),
+      autoLabel       = $("autoLabel"),
+      retryBtn        = $("retryBtn"),
+      adAfterDl       = $("adAfterDl"),
+      interstitialAd  = $("interstitialAd"),
+      closeBtn        = $("closeInterstitial"),
+      adTimerEl       = $("adTimer");
 
 let current        = null;
 let installPrompt  = null;
 let autoProcessing = false;
 let lastUrl        = "";
+
+/* ── PWA Detection ── */
+function isPWA() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true ||
+    document.referrer.includes("android-app://")
+  );
+}
 
 /* ── Supported Platforms ── */
 const SUPPORTED = [
@@ -87,6 +99,52 @@ function escapeHtml(s) {
 function buildDlUrl(d) {
   if (!d?.id) return "#";
   return `/api/download?id=${encodeURIComponent(d.id)}`;
+}
+
+/* ══════════════════════════════
+   INTERSTITIAL AD - PWA ke liye
+══════════════════════════════ */
+function showInterstitialAd(callback) {
+  if (!interstitialAd) {
+    callback?.();
+    return;
+  }
+
+  interstitialAd.classList.remove("hide");
+  document.body.style.overflow = "hidden";
+
+  let secs = 5;
+  if (adTimerEl) adTimerEl.textContent = secs;
+
+  const timer = setInterval(() => {
+    secs--;
+    if (adTimerEl) adTimerEl.textContent = secs;
+    if (secs <= 0) {
+      clearInterval(timer);
+      closeAd();
+      callback?.();
+    }
+  }, 1000);
+
+  function closeAd() {
+    clearInterval(timer);
+    interstitialAd.classList.add("hide");
+    document.body.style.overflow = "";
+  }
+
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      closeAd();
+      callback?.();
+    };
+  }
+
+  interstitialAd.onclick = e => {
+    if (e.target === interstitialAd) {
+      closeAd();
+      callback?.();
+    }
+  };
 }
 
 /* ── History ── */
@@ -159,8 +217,9 @@ async function processUrl(value, autoDownload = false) {
 
     current = d;
     name.textContent = d.filename || "media.mp4";
-    meta.textContent = (d.contentType || "media").replace("video/","").toUpperCase() +
-                       (d.size ? " • " + size(d.size) : "");
+    meta.textContent =
+      (d.contentType || "media").replace("video/","").toUpperCase() +
+      (d.size ? " • " + size(d.size) : "");
     showPreview(d);
     download.href = buildDlUrl(d);
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
@@ -181,9 +240,8 @@ async function processUrl(value, autoDownload = false) {
   }
 }
 
-/* ── Trigger Download ── */
-function triggerDownload(d) {
-  if (!d?.id) return;
+/* ── Start Actual Download ── */
+function startDownload(d) {
   const dlUrl = buildDlUrl(d);
 
   saveHistory({
@@ -194,11 +252,10 @@ function triggerDownload(d) {
   });
 
   progress.classList.remove("hide");
+  if (adAfterDl) adAfterDl.classList.remove("hide");
   progressText.textContent = "Starting download…";
   bar.style.width          = "10%";
   progressPct.textContent  = "10%";
-
-  if (adAfterDl) adAfterDl.classList.remove("hide");
 
   if (isIOS()) {
     window.location.href = dlUrl;
@@ -216,16 +273,25 @@ function triggerDownload(d) {
     bar.style.width          = "100%";
     progressPct.textContent  = "100%";
     progressText.textContent = isIOS()
-      ? "✅ Tap & hold the video to save to Photos."
-      : "✅ Download started — check your Downloads folder.";
+      ? "✅ Tap & hold video to save to Photos."
+      : "✅ Check your Downloads folder.";
   }, 800);
+}
+
+/* ── Trigger Download - Ad Pehle ── */
+function triggerDownload(d) {
+  if (!d?.id) return;
+  if (isPWA()) {
+    showInterstitialAd(() => startDownload(d));
+  } else {
+    startDownload(d);
+  }
 }
 
 /* ── Preview ── */
 function showPreview(d) {
   thumb.innerHTML    = "";
   thumb.style.cursor = "pointer";
-  thumb.title        = "Click to preview";
   thumb.onclick      = () => {
     window.open(`/api/download?id=${d.id}&inline=1`, "_blank");
   };
@@ -243,7 +309,7 @@ function showPreview(d) {
   }
 }
 
-/* ── Paste Button ── */
+/* ── Paste ── */
 paste.onclick = async () => {
   try {
     const text = (await navigator.clipboard.readText()).trim();
@@ -261,7 +327,7 @@ paste.onclick = async () => {
   }
 };
 
-/* ── Get Media Button ── */
+/* ── Get Media ── */
 go.onclick = () => {
   const value = url.value.trim();
   if (!value) return msg("Please paste a media URL first.", "err");
@@ -277,40 +343,12 @@ url.onkeydown = e => {
 /* ── Download Button ── */
 download.addEventListener("click", e => {
   if (!current?.id) return;
-  const dlUrl = buildDlUrl(current);
-
-  saveHistory({
-    id:   current.id,
-    name: current.filename    || "media.mp4",
-    type: current.contentType || "media",
-    time: Date.now()
-  });
-
-  progress.classList.remove("hide");
-  progressText.textContent = "Starting download…";
-  bar.style.width          = "10%";
-  progressPct.textContent  = "10%";
-
-  if (adAfterDl) adAfterDl.classList.remove("hide");
-
-  if (isIOS()) {
-    e.preventDefault();
-    window.location.href = dlUrl;
-    setTimeout(() => {
-      bar.style.width          = "100%";
-      progressPct.textContent  = "100%";
-      progressText.textContent = "✅ Tap & hold video to save to Photos.";
-    }, 800);
-    return;
+  e.preventDefault();
+  if (isPWA()) {
+    showInterstitialAd(() => startDownload(current));
+  } else {
+    startDownload(current);
   }
-
-  download.href = dlUrl;
-  download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
-  setTimeout(() => {
-    bar.style.width          = "100%";
-    progressPct.textContent  = "100%";
-    progressText.textContent = "✅ Check your Downloads folder.";
-  }, 800);
 });
 
 /* ── Retry ── */
@@ -323,10 +361,16 @@ if (retryBtn) {
 
 /* ── Drag & Drop ── */
 ["dragenter","dragover"].forEach(ev =>
-  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.add("drag"); })
+  drop.addEventListener(ev, x => {
+    x.preventDefault();
+    drop.classList.add("drag");
+  })
 );
 ["dragleave","drop"].forEach(ev =>
-  drop.addEventListener(ev, x => { x.preventDefault(); drop.classList.remove("drag"); })
+  drop.addEventListener(ev, x => {
+    x.preventDefault();
+    drop.classList.remove("drag");
+  })
 );
 drop.addEventListener("drop", e => {
   const text = e.dataTransfer.getData("text/plain") ||
@@ -334,7 +378,7 @@ drop.addEventListener("drop", e => {
   if (text) processUrl(text.trim(), isAutoEnabled() && isSupportedUrl(text.trim()));
 });
 
-/* ── PWA Install Android ── */
+/* ── PWA Install ── */
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   installPrompt = e;
@@ -348,7 +392,7 @@ install.onclick = async () => {
   install.classList.add("hidden");
 };
 
-/* ── iOS Install Banner ── */
+/* ── iOS Banner ── */
 if (iosDismiss) {
   iosDismiss.onclick = () => {
     iosInstall?.classList.add("hidden");
@@ -356,16 +400,13 @@ if (iosDismiss) {
   };
 }
 
-/* ── Service Worker - Monetag Push Notifications ── */
+/* ── Service Worker ── */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js", { scope: "/" })
-      .then(reg => {
-        console.log("SW registered:", reg.scope);
-      })
-      .catch(err => {
-        console.log("SW registration failed:", err);
-      });
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then(r => console.log("SW ok:", r.scope))
+      .catch(e => console.log("SW fail:", e));
   });
 }
 
