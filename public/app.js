@@ -1,30 +1,42 @@
-/* QuickSave app.js v4.4 */
-console.log("QuickSave app.js v4.4 loaded");
+/* QuickSave app.js v5.0 */
+console.log("QuickSave app.js v5.0 loaded");
 
 const $ = id => document.getElementById(id);
-const url       = $("url"),
-      paste     = $("paste"),
-      go        = $("go"),
-      drop      = $("drop"),
-      status    = $("status"),
-      result    = $("result"),
-      name      = $("name"),
-      meta      = $("meta"),
-      download  = $("download"),
-      thumb     = $("thumb"),
-      progress  = $("progress"),
-      bar       = $("bar"),
+const url        = $("url"),
+      paste      = $("paste"),
+      go         = $("go"),
+      drop       = $("drop"),
+      status     = $("status"),
+      result     = $("result"),
+      name       = $("name"),
+      meta       = $("meta"),
+      download   = $("download"),
+      thumb      = $("thumb"),
+      progress   = $("progress"),
+      bar        = $("bar"),
       progressText = $("progressText"),
       progressPct  = $("progressPct"),
       historyPanel = $("historyPanel"),
       history      = $("history"),
       install      = $("install"),
+      iosInstall   = $("iosInstall"),
+      iosDismiss   = $("iosDismiss"),
       autoToggle   = $("autoToggle"),
       autoLabel    = $("autoLabel");
 
-let current      = null;
+let current       = null;
 let installPrompt = null;
 let autoProcessing = false;
+
+/* ── iOS Detection ── */
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+
+function isInStandaloneMode() {
+  return window.matchMedia('(display-mode: standalone)').matches || 
+         window.navigator.standalone === true;
+}
 
 /* ── Auto setting ── */
 function isAutoEnabled() {
@@ -59,7 +71,6 @@ function escapeHtml(s) {
   );
 }
 
-/* Yahan fix kiya hai: Ab download link direct proxy par jayega taaki browser use play karne ki jagah download kare */
 function buildDlUrl(d) {
   if (!d || !d.id) return "#";
   return `/api/download?id=${encodeURIComponent(d.id)}`;
@@ -71,7 +82,8 @@ function isSupportedUrl(u) {
     return [
       "instagram.com","facebook.com","fb.watch",
       "tiktok.com","youtube.com","youtu.be",
-      "twitter.com","x.com"
+      "twitter.com","x.com","reddit.com",
+      "vimeo.com","dailymotion.com"
     ].some(p => h.includes(p));
   } catch { return false; }
 }
@@ -95,7 +107,7 @@ function renderHistory() {
         <b>${escapeHtml(x.name || "media")}</b>
         <small>${escapeHtml(x.type || "media")} • ${new Date(x.time).toLocaleString()}</small>
       </div>
-      <a href="${href}">Download</a>
+      <a href="${href}" download="${escapeHtml(x.name || 'media')}">Download</a>
     </div>`;
   }).join("");
 }
@@ -151,10 +163,9 @@ async function processUrl(value, autoDownload = false) {
 
     download.href = dlUrl;
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
-    download.removeAttribute("target"); // Naya tab open hone se rokne ke liye target="_blank" hata diya
 
     result.classList.remove("hide");
-    msg("Media is ready. Tap Download file.", "ok");
+    msg("✓ Media ready! Tap Download to save.", "ok");
 
     if (autoDownload && isAutoEnabled()) {
       msg("Auto-downloading…", "ok");
@@ -174,10 +185,7 @@ async function processUrl(value, autoDownload = false) {
 function triggerDownload(d) {
   if (!d || !d.id) return;
   const dlUrl = buildDlUrl(d);
-  download.href = dlUrl;
-  download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
-  download.removeAttribute("target"); // Naya tab open hone se rokne ke liye target="_blank" hata diya
-
+  
   saveHistory({
     id:   d.id,
     name: d.filename || "media.mp4",
@@ -190,37 +198,47 @@ function triggerDownload(d) {
   bar.style.width   = "10%";
   progressPct.textContent = "10%";
 
-  download.click();
+  // iOS ke liye alag handling
+  if (isIOS()) {
+    // iOS mein direct window.location se download trigger karo
+    window.location.href = dlUrl;
+  } else {
+    const a = document.createElement("a");
+    a.href = dlUrl;
+    a.download = d.filename || "QuickSave_Media.mp4";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 1000);
+  }
 
   setTimeout(() => {
     bar.style.width = "100%";
     progressPct.textContent = "Ready";
-    progressText.textContent = "Download started — check your Downloads app.";
+    progressText.textContent = isIOS() 
+      ? "Download started — tap & hold to save video." 
+      : "Download started — check your Downloads folder.";
   }, 500);
 }
 
-/* ── Preview (Thumbnail Click to Play Logic) ── */
+/* ── Preview ── */
 function showPreview(d) {
   thumb.innerHTML = "";
   thumb.style.overflow = "hidden";
   thumb.style.cursor = "pointer";
 
-  // Agar user thumbnail box par click karega toh video play hone ke liye naye tab me khulegi
   thumb.onclick = () => {
-    const playUrl = d.directUrl || `/api/download?id=${d.id}`;
+    const playUrl = `/api/download?id=${d.id}&inline=1`;
     window.open(playUrl, '_blank');
   };
   
   if (d.thumbnail) {
     const img = new Image();
     img.src = d.thumbnail;
-    
-    // Chhoti size (56x56 px) fix
     img.style.width = "100%";
     img.style.height = "100%";
     img.style.objectFit = "cover";
     img.style.display = "block";
-    
     img.onload  = () => thumb.appendChild(img);
     img.onerror = () => (thumb.innerHTML = "<span>▶</span>");
   } else {
@@ -268,13 +286,11 @@ url.onkeydown = e => {
 };
 
 /* ── Download button ── */
-download.addEventListener("click", () => {
+download.addEventListener("click", (e) => {
   if (!current || !current.id) return;
+  
   const dlUrl = buildDlUrl(current);
-  download.href = dlUrl;
-  download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
-  download.removeAttribute("target");
-
+  
   saveHistory({
     id:   current.id,
     name: current.filename || "media.mp4",
@@ -287,10 +303,26 @@ download.addEventListener("click", () => {
   bar.style.width = "10%";
   progressPct.textContent = "10%";
 
+  // iOS ke liye alag behavior
+  if (isIOS()) {
+    e.preventDefault();
+    window.location.href = dlUrl;
+    setTimeout(() => {
+      bar.style.width = "100%";
+      progressPct.textContent = "Ready";
+      progressText.textContent = "Download started — tap & hold video to save to Photos.";
+    }, 500);
+    return;
+  }
+
+  // Android/Desktop ke liye normal download
+  download.href = dlUrl;
+  download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
+  
   setTimeout(() => {
     bar.style.width = "100%";
     progressPct.textContent = "Ready";
-    progressText.textContent = "Download started — check your Downloads app.";
+    progressText.textContent = "Download started — check your Downloads folder.";
   }, 500);
 });
 
@@ -306,19 +338,36 @@ drop.addEventListener("drop", e => {
   if (text) processUrl(text.trim(), isAutoEnabled() && isSupportedUrl(text.trim()));
 });
 
-/* ── PWA Install ── */
+/* ── PWA Install - Android ── */
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   installPrompt = e;
-  install.classList.remove("hidden");
+  // Sirf non-iOS ke liye dikhaao
+  if (!isIOS()) {
+    install.classList.remove("hidden");
+  }
 });
+
 install.onclick = async () => {
   if (!installPrompt) return;
   installPrompt.prompt();
-  await installPrompt.userChoice;
+  const { outcome } = await installPrompt.userChoice;
+  console.log("Install outcome:", outcome);
   installPrompt = null;
   install.classList.add("hidden");
 };
+
+/* ── iOS Install Instructions ── */
+function showIOSInstall() {
+  if (iosInstall) iosInstall.classList.remove("hidden");
+}
+
+if (iosDismiss) {
+  iosDismiss.onclick = () => {
+    if (iosInstall) iosInstall.classList.add("hidden");
+    localStorage.setItem("qs_ios_dismissed", "true");
+  };
+}
 
 /* ── Service Worker ── */
 if ("serviceWorker" in navigator) {
@@ -332,6 +381,14 @@ if ("serviceWorker" in navigator) {
 ══════════════════════════════ */
 async function onStartup() {
   setAuto(isAutoEnabled());
+  
+  // iOS install banner dikhao (agar pehle dismiss nahi kiya aur standalone nahi hai)
+  if (isIOS() && !isInStandaloneMode()) {
+    const dismissed = localStorage.getItem("qs_ios_dismissed");
+    if (!dismissed) {
+      setTimeout(() => showIOSInstall(), 2000);
+    }
+  }
 
   const params = new URLSearchParams(window.location.search);
   const sharedUrl = params.get("url") || params.get("text") || params.get("title");
