@@ -1,5 +1,5 @@
-/* QuickSave app.js v4.3 */
-console.log("QuickSave app.js v4.3 loaded");
+/* QuickSave app.js v4.4 */
+console.log("QuickSave app.js v4.4 loaded");
 
 const $ = id => document.getElementById(id);
 const url       = $("url"),
@@ -59,8 +59,8 @@ function escapeHtml(s) {
   );
 }
 
+/* Yahan fix kiya hai: Ab download link direct proxy par jayega taaki browser use play karne ki jagah download kare */
 function buildDlUrl(d) {
-  if (d && d.directUrl) return d.directUrl; 
   if (!d || !d.id) return "#";
   return `/api/download?id=${encodeURIComponent(d.id)}`;
 }
@@ -151,7 +151,7 @@ async function processUrl(value, autoDownload = false) {
 
     download.href = dlUrl;
     download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
-    download.setAttribute("target", "_blank"); 
+    download.removeAttribute("target"); // Naya tab open hone se rokne ke liye target="_blank" hata diya
 
     result.classList.remove("hide");
     msg("Media is ready. Tap Download file.", "ok");
@@ -176,7 +176,7 @@ function triggerDownload(d) {
   const dlUrl = buildDlUrl(d);
   download.href = dlUrl;
   download.setAttribute("download", d.filename || "QuickSave_Media.mp4");
-  download.setAttribute("target", "_blank");
+  download.removeAttribute("target"); // Naya tab open hone se rokne ke liye target="_blank" hata diya
 
   saveHistory({
     id:   d.id,
@@ -203,7 +203,7 @@ function triggerDownload(d) {
 function showPreview(d) {
   thumb.innerHTML = "";
   thumb.style.overflow = "hidden";
-  thumb.style.cursor = "pointer"; // Mouse cursor pointer ban jayega taaki lage ki click kar sakte hain
+  thumb.style.cursor = "pointer";
 
   // Agar user thumbnail box par click karega toh video play hone ke liye naye tab me khulegi
   thumb.onclick = () => {
@@ -215,7 +215,7 @@ function showPreview(d) {
     const img = new Image();
     img.src = d.thumbnail;
     
-    // Size ko CSS wali thumb class (56x56) tak hi restrict rakhega
+    // Chhoti size (56x56 px) fix
     img.style.width = "100%";
     img.style.height = "100%";
     img.style.objectFit = "cover";
@@ -273,7 +273,7 @@ download.addEventListener("click", () => {
   const dlUrl = buildDlUrl(current);
   download.href = dlUrl;
   download.setAttribute("download", current.filename || "QuickSave_Media.mp4");
-  download.setAttribute("target", "_blank");
+  download.removeAttribute("target");
 
   saveHistory({
     id:   current.id,
